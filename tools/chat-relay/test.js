@@ -1,0 +1,128 @@
+'use strict';
+// End-to-end relay test: starts server.js on a free port with a temporary data.json.
+const { spawn } = require('child_process');
+const net = require('net');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const assert = require('assert');
+
+const PORT = 25000 + Math.floor(Math.random() * 500);
+const DATA = path.join(os.tmpdir(), `arsenic-relay-test-${process.pid}.json`);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function client() {
+    const sock = net.connect(PORT, '127.0.0.1');
+    const inbox = [];
+    let buf = '';
+    sock.setEncoding('utf8');
+    sock.on('data', d => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) { inbox.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); }
+    });
+    const c = {
+        sock, inbox,
+        send: o => sock.write(JSON.stringify(o) + '\n'),
+        async wait(pred, label) {
+            for (let n = 0; n < 100; n++) {
+                const idx = inbox.findIndex(pred);
+                if (idx >= 0) return inbox.splice(idx, 1)[0];
+                await sleep(20);
+            }
+            throw new Error('timeout: ' + label + '; received ' + JSON.stringify(inbox));
+        },
+        close: () => new Promise(r => { sock.once('close', r); sock.end(); }),
+    };
+    return new Promise((res, rej) => { sock.once('connect', () => res(c)); sock.once('error', rej); });
+}
+
+(async () => {
+    const srv = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+        env: Object.assign({}, process.env, { PORT: String(PORT), BIND: '127.0.0.1', DATA_FILE: DATA, DISCORD_TOKEN: '', DISCORD_CHANNEL_ID: '' }),
+        stdio: ['ignore', 'pipe', 'inherit'],
+    });
+    let out = '';
+    srv.stdout.on('data', d => { out += d; });
+    for (let n = 0; n < 100 && !out.includes('Relais Arsenic'); n++) await sleep(30);
+    let ok = false;
+    try {
+        // 1. new nickname + token
+        const a = await client();
+        a.send({ t: 'hello' });
+        const wa = await a.wait(m => m.t === 'welcome', 'welcome A');
+        assert.match(wa.nick, /^[A-Za-z0-9_]{3,16}$/);
+        assert.match(wa.token, /^[a-f0-9]{64}$/);
+        console.log('ok  generated nickname:', wa.nick);
+
+        // 2. the token gives back the same nickname
+        const b = await client();
+        b.send({ t: 'hello' });
+        const wb = await b.wait(m => m.t === 'welcome', 'welcome B');
+        assert.notStrictEqual(wb.nick, wa.nick);
+        await a.wait(m => m.t === 'join' && m.nick === wb.nick, 'join B');
+        console.log('ok  distinct second nickname:', wb.nick);
+
+        // 3. message broadcast, colour codes and control chars stripped
+        a.send({ t: 'msg', text: '§4hello\u202e §lthe\u0007 world' });
+        const m = await b.wait(x => x.t === 'msg', 'msg');
+        assert.deepStrictEqual([m.from, m.text, m.src], [wa.nick, 'hello the world', 'mc']);
+        console.log('ok  message relayed and cleaned:', JSON.stringify(m.text));
+
+        // 4. online list
+        b.send({ t: 'online' });
+        const on = await b.wait(x => x.t === 'online', 'online');
+        assert.deepStrictEqual(on.users, [wa.nick, wb.nick].sort());
+        console.log('ok  online:', on.users.join(', '));
+
+        // 5. rename: invalid, reserved, taken, valid, then cooldown
+        a.send({ t: 'nick', name: 'x' });
+        await a.wait(x => x.t === 'err' && /Invalid name/.test(x.text), 'invalid nick');
+        a.send({ t: 'nick', name: 'AdminBob' });
+        await a.wait(x => x.t === 'err' && /reserved/.test(x.text), 'reserved nick');
+        a.send({ t: 'nick', name: wb.nick.toLowerCase() });
+        await a.wait(x => x.t === 'err' && /taken/.test(x.text), 'taken nick');
+        await sleep(2100); // burst regained
+        a.send({ t: 'nick', name: 'Tester_1' });
+        await a.wait(x => x.t === 'nick' && x.nick === 'Tester_1', 'nick ok');
+        await b.wait(x => x.t === 'rename' && x.from === wa.nick && x.to === 'Tester_1', 'rename seen by B');
+        a.send({ t: 'nick', name: 'Tester_2' });
+        await a.wait(x => x.t === 'err' && /before renaming/.test(x.text), 'cooldown');
+        console.log('ok  rename (validation, reserved, duplicates, cooldown)');
+
+        // 6. rate limit
+        await sleep(2100);
+        for (let i = 0; i < 8; i++) a.send({ t: 'msg', text: 'spam ' + i });
+        await a.wait(x => x.t === 'err' && /too fast/.test(x.text), 'rate limit');
+        console.log('ok  rate limit');
+
+        // 7. reconnect with the token: same nickname, token persisted hashed
+        await a.close();
+        await b.wait(x => x.t === 'leave' && x.nick === 'Tester_1', 'leave');
+        const a2 = await client();
+        a2.send({ t: 'hello', token: wa.token });
+        const wa2 = await a2.wait(x => x.t === 'welcome', 'welcome A2');
+        assert.strictEqual(wa2.nick, 'Tester_1');
+        await sleep(400);
+        const disk = fs.readFileSync(DATA, 'utf8');
+        assert.ok(!disk.includes(wa.token), 'the raw token must not be on disk');
+        console.log('ok  token reused -> same nickname; only the hash is stored');
+
+        // 8. request before authentication rejected
+        const c = await client();
+        c.send({ t: 'msg', text: 'hop' });
+        await c.wait(x => x.t === 'err' && /Authentication/.test(x.text), 'auth required');
+        console.log('ok  authentication required');
+
+        await Promise.all([a2.close(), b.close(), c.close()]);
+        ok = true;
+    } catch (e) {
+        console.error('FAIL', e.message);
+} finally {
+        srv.kill('SIGTERM');
+        await sleep(200);
+        try { fs.unlinkSync(DATA); } catch (e) {}
+        console.log(ok ? 'ALL TESTS PASSED' : 'SOME TESTS FAILED');
+        process.exit(ok ? 0 : 1);
+    }
+})();

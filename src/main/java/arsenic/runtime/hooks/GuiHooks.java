@@ -160,6 +160,11 @@ public final class GuiHooks {
 
     /** GuiScreen.sendChatMessage(String, boolean) HEAD. @return true to cancel */
     public static boolean sendChatMessage(GuiScreen self, String msg, boolean addToChat) {
+        // "#message" goes to the anonymous Arsenic chat instead of the server (only when ArsenicChat is on)
+        if (arsenic.module.impl.client.ArsenicChat.handleShortcut(msg)) {
+            Minecraft.getMinecraft().ingameGUI.getChatGUI().addToSentMessages(msg);
+            return true;
+        }
         if (!msg.startsWith("."))
             return false;
         Arsenic.getInstance().getCommandManager().executeCommand(msg);
