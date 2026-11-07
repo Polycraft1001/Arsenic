@@ -11,32 +11,31 @@ import net.minecraft.client.Minecraft;
 import org.reflections.Reflections;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static org.reflections.scanners.Scanners.SubTypes;
-import org.lwjgl.input.Keyboard;
 import org.lwjgl.opengl.Display;
 
 public class ModuleManager {
 
-    private final Map<Class<? extends Module>, Module> modules = new HashMap<>();
+    private final Map<Class<? extends Module>, Module> modules = new ConcurrentHashMap<>();
     /**
      * Built-in modules of a tier this build leaves out. They are never listed, enabled or saved, but the engine reads
      * them by class (getModuleByClass), so they still exist and stay disabled.
      */
-    private final Map<Class<? extends Module>, Module> unavailable = new HashMap<>();
+    private final Map<Class<? extends Module>, Module> unavailable = new ConcurrentHashMap<>();
     /** Modules a held key switched on, so its release can switch them off again. */
     private final Set<Module> heldModules = new HashSet<>();
 
     public final int initialize() {
-        if(modules.size() != 0)
+        if (!modules.isEmpty())
             throw new RuntimeException("Double initialization of Module Manager.");
 
         Reflections reflections = new Reflections("arsenic.module");
         reflections.get(SubTypes.of(Module.class).asClass()).forEach(module -> addModule((Class<? extends Module>) module));
 
-        if(System.getProperty("os.name").toLowerCase().contains("mac"))
+        if (System.getProperty("os.name").toLowerCase().contains("mac"))
             modules.remove(PostProcessing.class);
 
         Arsenic.getInstance().getAddonManager().installDefaults();
@@ -52,10 +51,8 @@ public class ModuleManager {
         return getModules().stream().filter(Module::isEnabled).collect(Collectors.toList());
     }
 
-
     public List<String> getClosestModuleName(String name) {
-        return Arsenic.getArsenic().getModuleManager().getModules()
-                .stream().map(Module::getName).filter(cName -> cName.toLowerCase().startsWith(name.toLowerCase()))
+        return getModules().stream().map(Module::getName).filter(cName -> cName.toLowerCase().startsWith(name.toLowerCase()))
                 .sorted(Comparator.naturalOrder()).collect(Collectors.toList());
     }
 
@@ -88,16 +85,16 @@ public class ModuleManager {
             return;
         }
 
-        AtomicBoolean saveConfig = new AtomicBoolean(false);
-
-        getModules().stream()
-                .filter(m -> m.getKeybind() == event.getKeycode() && m.getKeybindMode() == KeybindMode.TOGGLE)
-                .forEach(m -> {
-                    m.setEnabled(!m.isEnabled());
-                    saveConfig.set(true);
-                });
-
-        if (saveConfig.get()) { Arsenic.getArsenic().getConfigManager().saveConfig(); }
+        // a key press is rare enough to just walk the modules; a bind cache would also have to follow config loads
+        boolean toggled = false;
+        for (Module m : getModules()) {
+            if (m.getKeybind() != event.getKeycode() || m.getKeybindMode() != KeybindMode.TOGGLE)
+                continue;
+            m.setEnabled(!m.isEnabled());
+            toggled = true;
+        }
+        if (toggled)
+            Arsenic.getArsenic().getConfigManager().saveConfig();
     };
 
     /**
@@ -153,10 +150,13 @@ public class ModuleManager {
             Module module = moduleClass.newInstance();
             module.registerProperties();
             ModuleInfo info = moduleClass.getAnnotation(ModuleInfo.class);
-            if (info != null && !BuildTiers.allows(info.tier()))
+            if (info != null && !BuildTiers.allows(info.tier())) {
                 unavailable.put(moduleClass, module);
-            else
+            } else {
                 modules.put(moduleClass, module);
-        } catch (Exception e) {e.printStackTrace();}
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }

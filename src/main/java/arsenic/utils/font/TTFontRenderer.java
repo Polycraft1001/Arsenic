@@ -10,6 +10,7 @@ import java.awt.font.FontRenderContext;
 import java.awt.font.GlyphVector;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.ArrayList;
@@ -44,9 +45,13 @@ public class TTFontRenderer implements IFontRenderer {
     /** The cell margin the original renderer laid glyphs out with, in base-size pixels. */
     private static final int MARGIN = 6;
     private static final long ATLAS_IDLE_MS = 5000;
+    /** A world atlas drawn with this recently is still in use: dropping it would only rasterise it again. */
+    private static final long ATLAS_ACTIVE_MS = 1000;
     private static final int MAX_ATLASES = 12;
     /** Ratio between two neighbouring raster sizes for text that can't be pixel-snapped. */
     private static final double SIZE_STEP_RATIO = 1.2;
+    /** World-space text bigger than this on screen is scaled up from it: huge glyphs are slow to rasterise. */
+    private static final int MAX_WORLD_RASTER = 128;
 
     private final Font font;
     private final boolean antiAlias;
@@ -63,7 +68,9 @@ public class TTFontRenderer implements IFontRenderer {
     private float capHeight;
     private float cellHeight;
 
+    /** Screen text and world-space text keep separate atlases, so world text can never push the HUD's out. */
     private final Map<Integer, Atlas> atlases = new HashMap<>();
+    private final Map<Integer, Atlas> worldAtlases = new HashMap<>();
     private final FloatBuffer matrixBuffer = BufferUtils.createFloatBuffer(16);
     private final float[] projection = new float[16];
     private final float[] modelview = new float[16];
@@ -109,13 +116,18 @@ public class TTFontRenderer implements IFontRenderer {
 
     @Override
     public void drawString(String text, float x, float y, int color) {
-        renderString(text, x, y, color, false);
+        if (text == null || text.length() == 0)
+            return;
+        renderString(text, x, y, color, false, currentTransform());
     }
 
     @Override
     public void drawStringWithShadow(String text, float x, float y, int color) {
-        renderString(text, x + 0.5f, y + 0.5f, color, true);
-        renderString(text, x, y, color, false);
+        if (text == null || text.length() == 0)
+            return;
+        Transform transform = currentTransform();
+        renderString(text, x + 0.5f, y + 0.5f, color, true, transform);
+        renderString(text, x, y, color, false, transform);
     }
 
     @Override
@@ -149,17 +161,21 @@ public class TTFontRenderer implements IFontRenderer {
         return advance;
     }
 
-    private void renderString(CharSequence text, float x, float y, int color, boolean shadow) {
-        if (text == null || text.length() == 0)
-            return;
-
-        Transform transform = currentTransform();
+    private void renderString(CharSequence text, float x, float y, int color, boolean shadow, Transform transform) {
         int rasterSize = Math.round(emSize * transform.pixelsPerUnit);
-        // World-space text (rotated or in perspective) can't be pixel-snapped, and its size on screen
-        // changes with every camera move: give it a few shared size steps instead of an atlas per size.
-        if (!transform.snap)
-            rasterSize = sizeStep(rasterSize);
-        Atlas atlas = atlas(rasterSize);
+        Atlas atlas;
+        if (transform.snap) {
+            atlas = atlas(rasterSize, false);
+        } else {
+            // World-space text (rotated or in perspective) can't be pixel-snapped, and its size on screen
+            // changes with every camera move: give it a few shared size steps instead of an atlas per size.
+            // Off screen it is skipped before anything is rasterised: beside or behind the camera the size
+            // works out huge (it divides by the distance in front of the camera), and every nametag around
+            // the player used to rasterise giant glyphs into new atlases each frame.
+            if (!transform.mayShow(x, y, getWidth(text.toString()), height))
+                return;
+            atlas = atlas(Math.min(MAX_WORLD_RASTER, sizeStep(rasterSize)), true);
+        }
         float unit = emSize / atlas.pixelSize;
 
         // rasterise everything first so all uploads happen before drawing starts
@@ -333,11 +349,49 @@ public class TTFontRenderer implements IFontRenderer {
 
     // ---- where text lands on screen ------------------------------------------------------------
 
+    /*
+     * Reading the matrices back is a glGet, which makes the CPU wait for the driver to catch up (very costly with
+     * threaded drivers, e.g. NVIDIA's threaded optimisation). Code that draws many strings without touching the
+     * matrix in between can wrap them in beginBatch/endBatch so they share one read. A uniform scale applied
+     * through FontRendererExtension is tracked with pushScale/popScale; any other matrix change inside a batch
+     * is not seen.
+     */
+    private static int batchDepth;
+    private static float[][] batchRows;
+    private static float batchReadScale = 1f;
+    private static float batchScale = 1f;
+
+    /** Starts a run of strings drawn under one unchanged matrix (apart from FontRendererExtension scaling). */
+    public static void beginBatch() {
+        batchDepth++;
+    }
+
+    public static void endBatch() {
+        if (batchDepth > 0 && --batchDepth == 0)
+            batchRows = null;
+    }
+
+    /** A uniform glScalef applied around a string inside a batch. */
+    static void pushScale(float scale) {
+        batchScale *= scale;
+    }
+
+    static void popScale(float scale) {
+        batchScale /= scale;
+    }
+
     /**
      * Reads projection x modelview to find the text's size in screen pixels and to snap glyphs to
      * the pixel grid. Works whatever transforms are active, including the ClickGUI's own projection.
      */
     private Transform currentTransform() {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (batchDepth > 0 && batchRows != null) {
+            // a uniform scale S multiplies the x, y and z columns of P * M
+            float k = batchScale / batchReadScale;
+            return new Transform(scaled(batchRows[0], k), scaled(batchRows[1], k), scaled(batchRows[2], k),
+                    mc.displayWidth, mc.displayHeight);
+        }
         matrixBuffer.clear();
         GL11.glGetFloat(GL11.GL_PROJECTION_MATRIX, matrixBuffer);
         matrixBuffer.get(projection);
@@ -346,8 +400,15 @@ public class TTFontRenderer implements IFontRenderer {
         matrixBuffer.get(modelview);
         // rows 0, 1 and 3 of P * M (column-major), for the x, y and w of a point at z = 0
         float[] row0 = row(0), row1 = row(1), row3 = row(3);
-        Minecraft mc = Minecraft.getMinecraft();
+        if (batchDepth > 0) {
+            batchRows = new float[][]{row0.clone(), row1.clone(), row3.clone()};
+            batchReadScale = batchScale;
+        }
         return new Transform(row0, row1, row3, mc.displayWidth, mc.displayHeight);
+    }
+
+    private static float[] scaled(float[] row, float k) {
+        return k == 1f ? row : new float[]{row[0] * k, row[1] * k, row[2] * k, row[3]};
     }
 
     private float[] row(int r) {
@@ -363,13 +424,14 @@ public class TTFontRenderer implements IFontRenderer {
 
     private static final class Transform {
         final float pixelsPerUnit;
-        private final float[] rx, ry;
+        private final float[] rx, ry, rw;
         private final float width, height;
         private final boolean snap;
 
         Transform(float[] rx, float[] ry, float[] rw, int width, int height) {
             this.rx = rx;
             this.ry = ry;
+            this.rw = rw;
             this.width = width;
             this.height = height;
             float w = Math.abs(rw[3]) < 1e-6f ? 1f : rw[3];
@@ -378,6 +440,33 @@ public class TTFontRenderer implements IFontRenderer {
             this.snap = flat && Math.abs(rx[1]) < 1e-6f && Math.abs(ry[0]) < 1e-6f && Math.abs(rx[0]) > 1e-6f && Math.abs(ry[1]) > 1e-6f;
             float sx = (float) Math.hypot(rx[0], ry[0]) * width / 2f / Math.abs(w);
             this.pixelsPerUnit = Math.max(0.01f, sx);
+        }
+
+        /**
+         * False when a string's box, with a generous margin for glyph overhang, lies wholly outside one side of
+         * the view. The test is done in clip space against each plane, so it holds for points behind the camera.
+         */
+        boolean mayShow(float x, float y, float textWidth, float textHeight) {
+            float margin = textHeight * 2f;
+            float x0 = x - margin, x1 = x + textWidth + margin, y0 = y - margin, y1 = y + textHeight + margin;
+            int behind = 0, left = 0, right = 0, below = 0, above = 0;
+            for (int corner = 0; corner < 4; corner++) {
+                float px = (corner & 1) == 0 ? x0 : x1, py = (corner & 2) == 0 ? y0 : y1;
+                float cx = rx[0] * px + rx[1] * py + rx[3];
+                float cy = ry[0] * px + ry[1] * py + ry[3];
+                float cw = rw[0] * px + rw[1] * py + rw[3];
+                if (cw <= 0f)
+                    behind++;
+                if (cx < -cw)
+                    left++;
+                if (cx > cw)
+                    right++;
+                if (cy < -cw)
+                    below++;
+                if (cy > cw)
+                    above++;
+            }
+            return behind < 4 && left < 4 && right < 4 && below < 4 && above < 4;
         }
 
         float snapX(float v) {
@@ -404,13 +493,14 @@ public class TTFontRenderer implements IFontRenderer {
         return Math.max(4, Math.min(256, (int) Math.round(Math.pow(SIZE_STEP_RATIO, step))));
     }
 
-    private Atlas atlas(int pixelSize) {
+    private Atlas atlas(int pixelSize, boolean world) {
         pixelSize = Math.max(4, Math.min(256, pixelSize));
+        Map<Integer, Atlas> pool = world ? worldAtlases : atlases;
         long now = System.currentTimeMillis();
-        Atlas atlas = atlases.get(pixelSize);
+        Atlas atlas = pool.get(pixelSize);
         if (atlas == null) {
-            if (atlases.size() >= MAX_ATLASES) {
-                Iterator<Atlas> it = atlases.values().iterator();
+            if (pool.size() >= MAX_ATLASES) {
+                Iterator<Atlas> it = pool.values().iterator();
                 while (it.hasNext()) {
                     Atlas old = it.next();
                     if (now - old.lastUsed > ATLAS_IDLE_MS) {
@@ -418,27 +508,47 @@ public class TTFontRenderer implements IFontRenderer {
                         it.remove();
                     }
                 }
-                // still full of recently used atlases: drop the least recently used one so the
-                // texture pages can't pile up without bound
-                if (atlases.size() >= MAX_ATLASES) {
-                    Iterator<Atlas> lru = atlases.values().iterator();
-                    Atlas oldest = null;
-                    while (lru.hasNext()) {
-                        Atlas candidate = lru.next();
+                if (pool.size() >= MAX_ATLASES) {
+                    Atlas oldest = null, nearest = null;
+                    for (Atlas candidate : pool.values()) {
                         if (oldest == null || candidate.lastUsed < oldest.lastUsed)
                             oldest = candidate;
+                        if (nearest == null || sizeDistance(candidate.pixelSize, pixelSize) < sizeDistance(nearest.pixelSize, pixelSize))
+                            nearest = candidate;
                     }
-                    if (oldest != null) {
-                        oldest.delete();
-                        atlases.values().remove(oldest);
+                    // Every world atlas is still being drawn with, so dropping one would rasterise it again a
+                    // moment later, over and over each frame. Draw with the closest size instead: it comes out
+                    // the right size, only a little soft or sharp.
+                    if (world && now - oldest.lastUsed <= ATLAS_ACTIVE_MS) {
+                        nearest.lastUsed = now;
+                        return nearest;
                     }
+                    // still full of recently used atlases: drop the least recently used one so the
+                    // texture pages can't pile up without bound
+                    oldest.delete();
+                    pool.values().remove(oldest);
                 }
             }
             atlas = new Atlas(pixelSize);
-            atlases.put(pixelSize, atlas);
+            pool.put(pixelSize, atlas);
         }
         atlas.lastUsed = now;
         return atlas;
+    }
+
+    /** How far apart two raster sizes are as a ratio, so 10 vs 12 counts as far as 100 vs 120. */
+    private static double sizeDistance(int a, int b) {
+        return Math.abs(Math.log((double) a / b));
+    }
+
+    /** Glyph pixels are staged here before upload; reused so each glyph doesn't allocate native memory. */
+    private static ByteBuffer uploadScratch;
+
+    private static ByteBuffer uploadBuffer(int bytes) {
+        if (uploadScratch == null || uploadScratch.capacity() < bytes)
+            uploadScratch = BufferUtils.createByteBuffer(Math.max(bytes, 64 * 64 * 4));
+        uploadScratch.clear();
+        return uploadScratch;
     }
 
     private static final class Glyph {
@@ -528,12 +638,12 @@ public class TTFontRenderer implements IFontRenderer {
             shelfX += w;
             shelfHeight = Math.max(shelfHeight, h);
 
-            ByteBuffer pixels = BufferUtils.createByteBuffer(w * h * 4);
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    pixels.put((byte) 255).put((byte) 255).put((byte) 255).put((byte) (image.getRGB(x, y) >>> 24));
-                }
-            }
+            // read the raster's backing array: BufferedImage.getRGB per pixel goes through the colour model and
+            // took tens of milliseconds for large world-space glyphs
+            int[] argb = ((DataBufferInt) image.getRaster().getDataBuffer()).getData();
+            ByteBuffer pixels = uploadBuffer(w * h * 4);
+            for (int p : argb)
+                pixels.put((byte) 255).put((byte) 255).put((byte) 255).put((byte) (p >>> 24));
             pixels.flip();
             GL11.glPushAttrib(GL11.GL_TEXTURE_BIT);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
