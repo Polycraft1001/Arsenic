@@ -34,7 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ArsenicChat extends Module {
 
     public static final String ICON = "\u2726";
-    private static final String PREFIX = "\u00a7b" + ICON + " \u00a7r";
+    private static final String PREFIX = "\u00a78[\u00a7bChat\u00a78] \u00a7r";
     private static final int DEFAULT_PORT = 25600;
 
     public final TextProperty server = new TextProperty("Server", "127.0.0.1:25600", 64);
@@ -109,6 +109,8 @@ public class ArsenicChat extends Module {
     }
 
     public boolean requestOnline() { return trySend(packet("online")); }
+
+    public boolean requestRandomNick() { return trySend(packet("gennick")); }
 
     /** @return true if the name is now ignored, false if it no longer is */
     public boolean toggleIgnore(String name) {
@@ -200,7 +202,7 @@ throw new IOException("server stopped responding");
          announcedFailure = false;
          int online = m.has("online") ? m.get("online").getAsInt() : 1;
          show("\u00a77Connected as \u00a7b" + nick + "\u00a77 (" + online + " online). "
-          + "Type \u00a7f#message\u00a77 ou \u00a7f.irc <message>\u00a77.");
+          + "Type \u00a7f#message\u00a77 or \u00a7f.irc <message>\u00a77.");
          break;
      }
      case "msg": {
@@ -211,7 +213,7 @@ throw new IOException("server stopped responding");
   if (discord && !discordMessages.getValue())
       return;
   String name = discord ? "\u00a79[Discord] \u00a73" + from
-   : (from.equalsIgnoreCase(nick) ? "\u00a7b" : "\u00a73") + from;
+   : "\u00a7b" + ICON + " " + (from.equalsIgnoreCase(nick) ? "\u00a7b" : "\u00a73") + from;
          show(name + "\u00a78: \u00a7f" + str(m, "text"));
   break;
      }

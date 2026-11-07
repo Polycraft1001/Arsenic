@@ -141,6 +141,7 @@ function handle(c, line) {
         case 'ping': return send(c, { t: 'pong' });
         case 'msg': return chat(c, m.text);
         case 'nick': return rename(c, m.name);
+        case 'gennick': return rename(c, genNick());
         case 'online': return send(c, { t: 'online', users: online() });
     }
 }

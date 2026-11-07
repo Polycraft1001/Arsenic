@@ -39,8 +39,10 @@ In Arsenic, enable the **ArsenicChat** module (Client category), then enter the 
 
 Available commands:
 
-- `#message` or `.irc message`: send a message.
+- `#message`, `.irc message`, `.ac message` or `.achat message`: send a message. (`.chat` is already an alias of Arsenic's `.say` command.)
+- Messages from other Arsenic users show a small `✦` icon before their nickname; Discord users are tagged as such.
 - `.irc nick`: show your nickname. `.irc nick NewName`: change it (3 to 16 characters, at most once per minute).
+- `.irc nick random`: let the relay generate a fresh random nickname (same cooldown), so you never have to reveal your Minecraft name.
 - `.irc online`, `.irc ignore <name>`, `.irc ignored`.
 
 The nickname is kept in `Arsenic/chat-token.txt`. Deleting that file gives you a new anonymous nickname.

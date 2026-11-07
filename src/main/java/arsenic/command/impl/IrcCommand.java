@@ -11,7 +11,7 @@ import java.util.List;
 
 import static arsenic.utils.java.JavaUtils.autoCompleteHelper;
 
-@CommandInfo(name = "irc", args = { "message|nick|online|ignore|ignored", "..." }, aliases = { "ac" },
+@CommandInfo(name = "irc", args = { "message|nick|online|ignore|ignored", "..." }, aliases = { "ac", "achat" },
         help = "talks in the anonymous Arsenic chat (shortcut: #message)", minArgs = 0)
 public class IrcCommand extends Command {
 
@@ -28,7 +28,7 @@ public class IrcCommand extends Command {
         }
         if (args.length == 0 || args[0].isEmpty()) {
             PlayerUtils.addWaterMarkedMessageToChat(chat.isConnected()
-                    ? "Connected as \u00a7b" + chat.getNick() + "\u00a7r. Usage: .irc <message> | nick [name] | online | ignore <name> | ignored"
+                    ? "Connected as \u00a7b" + chat.getNick() + "\u00a7r. Usage: .irc <message> | nick [name|random] | online | ignore <name> | ignored"
                     : "Not connected yet. Check the Server setting of ArsenicChat.");
             return;
         }
@@ -37,8 +37,8 @@ public class IrcCommand extends Command {
                 case "nick":
                     if (args.length == 1) {
                         PlayerUtils.addWaterMarkedMessageToChat(chat.isConnected()
-                                ? "Your chat name is \u00a7b" + chat.getNick() : "Not connected");
-                    } else if (!chat.requestNick(args[1])) {
+                                ? "Your chat name is \u00a7b" + chat.getNick() + "\u00a7r (.irc nick random for a new one)" : "Not connected");
+                    } else if (args[1].equalsIgnoreCase("random") ? !chat.requestRandomNick() : !chat.requestNick(args[1])) {
                         notConnected();
                     }
                     return;
@@ -80,6 +80,8 @@ public class IrcCommand extends Command {
     public List<String> getAutoComplete(String[] args) {
         if (args.length <= 1)
             return autoCompleteHelper(Arrays.asList("nick", "online", "ignore", "ignored"), args.length == 0 ? "" : args[0]);
+        if (args.length == 2 && args[0].equalsIgnoreCase("nick"))
+            return autoCompleteHelper(Arrays.asList("random"), args[1]);
         if (args.length == 2 && args[0].equalsIgnoreCase("ignore")) {
             ArsenicChat chat = ArsenicChat.get();
             if (chat != null)
