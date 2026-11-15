@@ -3,6 +3,8 @@ package arsenic.gui.hud;
 import arsenic.gui.click.GuiStyle;
 import arsenic.gui.design.M3;
 import arsenic.gui.design.M3Icons;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.main.Arsenic;
 import arsenic.utils.font.FontRendererExtension;
 import arsenic.utils.font.VanillaFontRenderer;
@@ -19,6 +21,9 @@ import net.minecraft.client.renderer.GlStateManager;
  * Every helper snaps box coordinates to the active device pixel grid ({@link #snap(float)}) and
  * centers text and icons around an explicit vertical midpoint {@code cy = y + h / 2f} so that top
  * and bottom margins are identical across all Minecraft GUI scales (1, 2, 3, 4).
+ * <p>
+ * Corner radii, outlines and chip shapes follow the current theme's {@link ThemeStyle}; a theme
+ * {@link ThemeRenderer} can draw the cards itself.
  */
 public final class HudStyle {
 
@@ -92,7 +97,21 @@ public final class HudStyle {
         int a = MathUtils.clamp(alpha, 0, 255);
         if (a <= 0)
             return;
-        float r = Math.min(radius, Math.min(x2 - x1, y2 - y1) / 2f);
+        ThemeStyle ts = ThemeStyle.current();
+        float r = ts.hudRadius(radius, x2 - x1, y2 - y1);
+
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.hudCard(x1, y1, x2, y2, r, a)) {
+                    resetGl();
+                    return;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+
         int shadowAlpha = (int) (GuiStyle.shadowAlpha(95) * (a / 255f));
         if (shadowAlpha > 0 && a > 40) {
             DrawUtils.drawShadow(x1, y1, x2, y2, r, 6f, shadowAlpha);
@@ -105,8 +124,10 @@ public final class HudStyle {
             int rim = M3.mix(M3.outlineVariant(), M3.primary(), 0.28f);
             DrawUtils.drawGlassRect(x1, y1, x2, y2, r, fill, rim, glass);
         }
-        int outlineAlpha = Math.min(155, (int) (130f * (a / 255f)));
-        DrawUtils.drawRoundedOutline(x1, y1, x2, y2, r, 1f, M3.alpha(M3.outlineVariant(), outlineAlpha));
+        if (ts.borderWidth > 0.01f) {
+            int outlineAlpha = ts.borderAlpha(Math.min(155, (int) (130f * (a / 255f))));
+            DrawUtils.drawRoundedOutline(x1, y1, x2, y2, r, ts.borderWidth, M3.alpha(M3.outlineVariant(), outlineAlpha));
+        }
         resetGl();
     }
 
@@ -116,7 +137,7 @@ public final class HudStyle {
         y1 = snap(y1);
         x2 = snap(x2);
         y2 = snap(y2);
-        float r = Math.min(radius, Math.min(x2 - x1, y2 - y1) / 2f);
+        float r = ThemeStyle.current().hudRadius(radius, x2 - x1, y2 - y1);
         DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, fill);
         if ((outlineColor >>> 24) > 0)
             DrawUtils.drawRoundedOutline(x1, y1, x2, y2, r, 1f, outlineColor);
@@ -132,7 +153,7 @@ public final class HudStyle {
         float y1 = snap(cy - size / 2f);
         float x2 = snap(x1 + size);
         float y2 = snap(y1 + size);
-        float r = Math.min(radius, size / 2f);
+        float r = ThemeStyle.current().hudRadius(radius, size, size);
         if ((bgColor >>> 24) > 0)
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, bgColor);
         float boxCx = (x1 + x2) / 2f;
@@ -152,7 +173,7 @@ public final class HudStyle {
         float x1 = snap(x2 - w);
         float y1 = snap(cy - height / 2f);
         float y2 = snap(y1 + height);
-        float r = (y2 - y1) / 2f;
+        float r = ThemeStyle.current().controlRadius(y2 - y1);
         if ((bgColor >>> 24) > 0)
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, bgColor);
         float boxCx = (x1 + x2) / 2f;
@@ -178,7 +199,7 @@ public final class HudStyle {
         float x2 = snap(x1 + w);
         float y1 = snap(cy - height / 2f);
         float y2 = snap(y1 + height);
-        float r = (y2 - y1) / 2f;
+        float r = ThemeStyle.current().controlRadius(y2 - y1);
         if ((bgColor >>> 24) > 0)
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, bgColor);
         float boxCx = (x1 + x2) / 2f;
@@ -202,7 +223,7 @@ public final class HudStyle {
         float h = y2 - y1;
         if (w <= 0f || h <= 0f)
             return;
-        float r = h / 2f;
+        float r = ThemeStyle.current().controlRadius(h);
         DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, trackColor);
         float pct = MathUtils.clamp01(progress);
         float trailPct = MathUtils.clamp01(trailProgress);

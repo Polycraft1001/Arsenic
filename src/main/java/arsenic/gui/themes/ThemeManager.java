@@ -1,5 +1,6 @@
 package arsenic.gui.themes;
 
+import arsenic.gui.themes.style.ThemeLoader;
 import arsenic.main.Arsenic;
 import arsenic.utils.interfaces.IConfig;
 import arsenic.utils.interfaces.ISerializable;
@@ -17,6 +18,11 @@ import java.util.stream.Collectors;
 public class ThemeManager implements IConfig<Theme>, ISerializable {
     private Theme currentTheme;
     private final List<Theme> themeList = new ArrayList<>();
+    /** Themes read from ~/Arsenic/themes/*.json (see THEMES.md); reloaded when a file changes. */
+    private final List<Theme> customThemes = new ArrayList<>();
+    private long customStamp = Long.MIN_VALUE;
+    private long lastPoll;
+
     public int initialize() {
         System.out.println("initialized theme manager");
         loadConfig();
@@ -139,8 +145,53 @@ public class ThemeManager implements IConfig<Theme>, ISerializable {
             themeList.add(toxin);
         }
 
+        // after the built-in themes (a file cannot take their names), before the saved theme is restored
+        loadCustomThemes();
+
         currentTheme = getContentByJsonKey("Classic");
         return themeList.size();
+    }
+
+    /**
+     * (Re)loads the theme files of {@code ~/Arsenic/themes/} (format: THEMES.md). A file cannot replace a
+     * built-in or addon theme with the same name. The current theme stays selected across reloads.
+     * @return how many theme files were loaded
+     */
+    public synchronized int loadCustomThemes() {
+        themeList.removeAll(customThemes);
+        customThemes.clear();
+        customStamp = ThemeLoader.stamp();
+        for (Theme theme : ThemeLoader.loadAll()) {
+            if (getContentByJsonKey(theme.getJsonKey()) != null) {
+                System.err.println("[Arsenic] Theme file \"" + theme.getJsonKey()
+                        + "\" uses the name of an existing theme and was skipped");
+                continue;
+            }
+            customThemes.add(theme);
+            themeList.add(theme);
+        }
+        if (currentTheme != null && !themeList.contains(currentTheme)) {
+            Theme same = getContentByJsonKey(currentTheme.getJsonKey());
+            currentTheme = same != null ? same : getContentByJsonKey("Classic");
+        }
+        if (!customThemes.isEmpty())
+            System.out.println("[Arsenic] Loaded " + customThemes.size() + " theme file(s) from " + ThemeLoader.folder());
+        return customThemes.size();
+    }
+
+    /** Reloads the theme files when one was added, removed or saved. Checks at most once a second. */
+    public void pollCustomThemes() {
+        long now = System.currentTimeMillis();
+        if (now - lastPoll < 1000L)
+            return;
+        lastPoll = now;
+        if (ThemeLoader.stamp() != customStamp)
+            loadCustomThemes();
+    }
+
+    /** The themes loaded from files, in file name order. */
+    public List<Theme> getCustomThemes() {
+        return java.util.Collections.unmodifiableList(customThemes);
     }
 
     public Theme getCurrentTheme() {

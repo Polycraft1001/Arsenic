@@ -25,10 +25,8 @@ public final class UITheme {
     }
 
     public static float radiusPill(float height) { return ThemeStyle.current().controlRadius(height); }
-    public static float radiusCard(float height) {
-        ThemeStyle ts = ThemeStyle.current();
-        return Math.min(height / 2f, Math.max(3f, height * 0.28f) * ts.roundness);
-    }
+    /** Base card radius. The theme's roundness is applied once, by {@link #surface} (M3Components.glass). */
+    public static float radiusCard(float height) { return Math.max(3f, height * 0.28f); }
     public static float radiusChip(float height) {
         return ThemeStyle.current().chipRadius(Math.max(2f, height * 0.34f));
     }

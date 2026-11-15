@@ -1,5 +1,6 @@
 package arsenic.gui.click;
 
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.main.Arsenic;
 import arsenic.utils.java.MathUtils;
 import arsenic.utils.interfaces.ISerializable;
@@ -289,32 +290,49 @@ public final class GuiStyle implements ISerializable {
 
     public static int transitionTimeMs() { return 700; }
 
-    public static boolean fontEnabled() { return INSTANCE.customFont; }
+    /** The custom font setting, unless the current theme asks for the Minecraft font. */
+    public static boolean fontEnabled() {
+        return INSTANCE.customFont && ThemeStyle.current().font != ThemeStyle.FontChoice.VANILLA;
+    }
 
     public static boolean soundsEnabled() { return INSTANCE.sounds; }
 
+    /** Preset shadow strength times the theme's {@link ThemeStyle#shadow}. */
     public static int shadowAlpha(int base) {
         Preset preset = p();
-        return preset.depth ? (int) (base * (preset.shadowStrength / 100.0)) : 0;
+        if (!preset.depth)
+            return 0;
+        return MathUtils.clamp((int) (base * (preset.shadowStrength / 100.0) * ThemeStyle.current().shadow), 0, 255);
     }
 
     public static float shadowSpread(float base) {
         return (float) (base * (p().elevation / 100.0));
     }
 
+    /** Preset edge glow times the theme's {@link ThemeStyle#edgeGlow}. */
     public static int edgeAlpha(int base) {
         Preset preset = p();
-        return preset.depth ? (int) (base * (preset.edgeGlow / 100.0)) : 0;
+        if (!preset.depth)
+            return 0;
+        return MathUtils.clamp((int) (base * (preset.edgeGlow / 100.0) * ThemeStyle.current().edgeGlow), 0, 255);
     }
 
     private static long lastFrameNanos;
     private static float frameDt = 1f / 60f;
 
-    /** Call once at the start of each GUI frame; it times the frame for {@link #scrollEase}. */
+    /**
+     * Call once at the start of each GUI frame; it times the frame for {@link #scrollEase}, applies the
+     * theme's animation speed and reloads theme files that changed on disk.
+     */
     public static void tickFrame() {
         long now = System.nanoTime();
         frameDt = lastFrameNanos == 0L ? 1f / 60f : Math.max(0f, Math.min(0.1f, (now - lastFrameNanos) / 1e9f));
         lastFrameNanos = now;
+        try {
+            Arsenic.getArsenic().getThemeManager().pollCustomThemes();
+        } catch (Throwable ignored) {
+        }
+        UITheme.syncAnimations();
     }
 
     /**
@@ -324,13 +342,14 @@ public final class GuiStyle implements ISerializable {
      */
     public static float scrollEase() { return 1f - (float) Math.exp(-frameDt * 9.75f); }
 
-    public static boolean glassEnabled() { return p().glass; }
+    /** The preset's glass, unless the current theme turns it off ({@link ThemeStyle#glass} = 0). */
+    public static boolean glassEnabled() { return p().glass && ThemeStyle.current().glass > 0.01f; }
 
-    public static float glassStrength() { return p().glass ? p().glassStrength : 0f; }
+    public static float glassStrength() { return glassEnabled() ? p().glassStrength * ThemeStyle.current().glass : 0f; }
 
     public static int glassify(int argb) {
         Preset preset = p();
-        if (!preset.glass)
+        if (!glassEnabled())
             return argb;
         int a = (argb >> 24) & 0xFF;
         int na = MathUtils.clamp((int) (a * (preset.glassFrost / 100f)), 0, 255);

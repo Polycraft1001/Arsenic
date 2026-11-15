@@ -1,6 +1,8 @@
 package arsenic.gui.design;
 
 import arsenic.gui.click.GuiStyle;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.utils.font.FontRendererExtension;
 import arsenic.utils.java.MathUtils;
 import arsenic.utils.render.DrawUtils;
@@ -13,6 +15,12 @@ import net.minecraft.util.ResourceLocation;
 public final class M3Components {
 
     private M3Components() {}
+
+    /** Runs after a {@link ThemeRenderer} drew a piece so the next draw starts from a clean colour. */
+    private static void afterRenderer() {
+        GlStateManager.color(1f, 1f, 1f, 1f);
+        RenderUtils.resetColorText();
+    }
 
     public static void card(float x1, float y1, float x2, float y2, float radius, int fill) {
         glass(x1, y1, x2, y2, radius, fill, 0f);
@@ -30,16 +38,35 @@ public final class M3Components {
      * An M3 surface in the glass material: soft drop shadow by elevation, a fill frosted by the
      * preset, the liquid-glass sheen and rim, and an accent edge glow. With the Performance
      * preset it falls back to a flat tonal surface.
+     * <p>
+     * The radius is scaled by the theme's {@link ThemeStyle#roundness} here (and only here), and the
+     * outline follows its border width and opacity. A theme {@link ThemeRenderer} may draw it instead.
      *
      * @param elevation 0 for a flat card, 1 for the floating window
      */
     public static void glass(float x1, float y1, float x2, float y2, float radius, int fill, float elevation) {
         if (x2 <= x1 || y2 <= y1)
             return;
+        ThemeStyle ts = ThemeStyle.current();
+        radius = ts.panelRadius(radius, x2 - x1, y2 - y1);
+
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.surface(x1, y1, x2, y2, radius, fill, elevation)) {
+                    afterRenderer();
+                    return;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+
         boolean light = M3.isLight();
         if (elevation > 0.01f) {
             int shadow = GuiStyle.shadowAlpha((int) ((light ? 70 : 140) * elevation));
-            DrawUtils.drawShadow(x1, y1, x2, y2, radius, GuiStyle.shadowSpread(22f * elevation), shadow);
+            if (shadow > 0)
+                DrawUtils.drawShadow(x1, y1, x2, y2, radius, GuiStyle.shadowSpread(22f * elevation), shadow);
         }
 
         DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius, GuiStyle.glassify(fill));
@@ -50,8 +77,9 @@ public final class M3Components {
                     M3.alpha(M3.primary(), light ? 10 : 16), 0xFFFFFFFF, strength);
         }
 
-        DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, 1f,
-                M3.alpha(light ? 0xFFFFFFFF : M3.outlineVariant(), light ? 190 : 120));
+        if (ts.borderWidth > 0.01f)
+            DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, ts.borderWidth,
+                    M3.alpha(light ? 0xFFFFFFFF : M3.outlineVariant(), ts.borderAlpha(light ? 190 : 120)));
         if (elevation > 0.01f)
             DrawUtils.drawEdgeHighlight(x1, y1, x2, y2, radius, M3.primary(),
                     GuiStyle.edgeAlpha((int) (26 * elevation)));
@@ -64,7 +92,7 @@ public final class M3Components {
     public static void navItem(FontRendererExtension<?> fr, String label, String icon,
                                float x1, float y1, float x2, float y2,
                                float selected, float hover, boolean showIcon) {
-        float radius = Math.min(10f, (y2 - y1) / 2f);
+        float radius = ThemeStyle.current().chipRadius(Math.min(10f, (y2 - y1) / 2f));
         if (hover > 0.01f)
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius,
                     M3.alpha(M3.surfaceContainerHighest(), (int) (120 * hover)));
@@ -89,7 +117,19 @@ public final class M3Components {
 
     public static void button(FontRendererExtension<?> fr, String label,
                               float x1, float y1, float x2, float y2, float hover, boolean filled) {
-        float radius = (y2 - y1) / 2f;
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.button(fr, label, x1, y1, x2, y2, hover, filled)) {
+                    afterRenderer();
+                    return;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+        ThemeStyle ts = ThemeStyle.current();
+        float radius = ts.controlRadius(y2 - y1);
         int fill = filled
                 ? M3.mix(M3.primaryContainer(), M3.primary(), hover * 0.28f)
                 : M3.alpha(M3.surfaceContainerHighest(), 150);
@@ -98,10 +138,32 @@ public final class M3Components {
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius, M3.alpha(fill, 255));
         else
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius, fill);
-        if (!filled)
-            DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, 1f, M3.alpha(M3.outline(), 130));
+        if (!filled && ts.borderWidth > 0.01f)
+            DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, ts.borderWidth,
+                    M3.alpha(M3.outline(), ts.borderAlpha(130)));
         fr.drawString(label, (x1 + x2) / 2f, (y1 + y2) / 2f, fg, fr.CENTREX, fr.CENTREY);
         RenderUtils.resetColorText();
+    }
+
+    /** Thin outline of a small control; follows the theme's border settings, at most 1.5 thick. */
+    private static void controlOutline(float x1, float y1, float x2, float y2, float radius, int color, int alpha) {
+        ThemeStyle ts = ThemeStyle.current();
+        if (ts.borderWidth <= 0.01f)
+            return;
+        DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, Math.min(1.5f, ts.borderWidth),
+                M3.alpha(color, ts.borderAlpha(alpha)));
+    }
+
+    /**
+     * A round handle (switch thumb, slider handle) that follows the theme's control shape:
+     * a circle for PILL, a rounded square for ROUNDED, a square for SQUARE.
+     */
+    public static void knob(float cx, float cy, float r, int color) {
+        ThemeStyle ts = ThemeStyle.current();
+        if (ts.controlShape == ThemeStyle.Shape.PILL)
+            DrawUtils.drawCircle(cx, cy, r, color);
+        else
+            DrawUtils.drawRoundedRect(cx - r, cy - r, cx + r, cy + r, ts.controlRadius(r * 2f), color);
     }
 
     /**
@@ -109,19 +171,31 @@ public final class M3Components {
      * @return the track width so callers can lay out around it.
      */
     public static float switchControl(float x1, float y1, float height, float pct, float hover) {
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                float w = tr.switchControl(x1, y1, height, pct, hover);
+                if (w >= 0f) {
+                    afterRenderer();
+                    return w;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+
         float trackH = height * 0.56f;
         float trackW = trackH * 1.625f;                     // 32 -> 52dp
         float trackX2 = x1 + trackW;
         float cy = y1 + height / 2f;
         float ty1 = cy - trackH / 2f;
-        float radius = trackH / 2f;
+        float radius = ThemeStyle.current().controlRadius(trackH);
 
         int track = M3.mix(M3.surfaceContainerHighest(), M3.primary(), pct);
         int fg = M3.mix(M3.outline(), M3.onPrimary(), pct);
         DrawUtils.drawRoundedRect(x1, ty1, trackX2, ty1 + trackH, radius, track);
         if (pct < 0.02f)                                     // outlined track only while off
-            DrawUtils.drawRoundedOutline(x1, ty1, trackX2, ty1 + trackH, radius, 1f,
-                    M3.alpha(M3.outline(), 130));
+            controlOutline(x1, ty1, trackX2, ty1 + trackH, radius, M3.outline(), 130);
 
         float thumbRest = trackH * 0.5f;                    // 16dp of 32
         float thumbOn = trackH * 0.75f;                     // 24dp of 32
@@ -133,9 +207,8 @@ public final class M3Components {
         float ky = cy;
 
         if (hover > 0.01f)
-            DrawUtils.drawCircle(kx, ky, thumbR * (1.62f + 0.22f * hover),
-                    M3.alpha(M3.onSurface(), (int) (26 * hover)));
-        DrawUtils.drawCircle(kx, ky, thumbR, fg);
+            knob(kx, ky, thumbR * (1.62f + 0.22f * hover), M3.alpha(M3.onSurface(), (int) (26 * hover)));
+        knob(kx, ky, thumbR, fg);
         return trackW;
     }
 
@@ -151,9 +224,22 @@ public final class M3Components {
         float h = TRACK_H;
         float hx = x1 + trackLen * p;
 
-        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + trackLen, cy + h / 2f, h / 2f, inactiveTrack());
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.slider(x1, cy, trackLen, p, active)) {
+                    afterRenderer();
+                    return hx;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+
+        float r = ThemeStyle.current().controlRadius(h);
+        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + trackLen, cy + h / 2f, r, inactiveTrack());
         if (hx - x1 > 0.5f)
-            DrawUtils.drawRoundedRect(x1, cy - h / 2f, Math.max(hx, x1 + h), cy + h / 2f, h / 2f, M3.primary());
+            DrawUtils.drawRoundedRect(x1, cy - h / 2f, Math.max(hx, x1 + h), cy + h / 2f, r, M3.primary());
         sliderHandle(hx, cy, active);
         return hx;
     }
@@ -167,13 +253,13 @@ public final class M3Components {
 
     /**
      * A fixed-size handle: it never resizes under the cursor (which made drags feel unsteady);
-     * hover and drag show as a soft primary halo instead.
+     * hover and drag show as a soft primary halo instead. Its shape follows the theme.
      */
     public static void sliderHandle(float hx, float cy, float active) {
         float a = Math.max(0f, Math.min(1f, active));
         if (a > 0.01f)
-            DrawUtils.drawCircle(hx, cy, HANDLE_R + 5f * a, M3.alpha(M3.primary(), (int) (46 * a)));
-        DrawUtils.drawCircle(hx, cy, HANDLE_R, M3.primary());
+            knob(hx, cy, HANDLE_R + 5f * a, M3.alpha(M3.primary(), (int) (46 * a)));
+        knob(hx, cy, HANDLE_R, M3.primary());
     }
 
     /**
@@ -184,7 +270,7 @@ public final class M3Components {
         float pad = 6f, h = 20f;
         float tw = fr.getWidth(text);
         float x1 = cx - tw / 2f - pad, x2 = cx + tw / 2f + pad;
-        DrawUtils.drawRoundedRect(x1, cyTop, x2, cyTop + h, 5f, M3.inverseSurface());
+        DrawUtils.drawRoundedRect(x1, cyTop, x2, cyTop + h, ThemeStyle.current().chipRadius(5f), M3.inverseSurface());
         fr.drawString(text, x2 - pad, cyTop + h / 2f, M3.inverseOnSurface(), fr.CENTREY);
         RenderUtils.resetColorText();
         return cyTop + h;
@@ -193,7 +279,18 @@ public final class M3Components {
     // ---- selection controls ----
 
     public static void checkbox(float cx, float cy, float size, float pct, float hover) {
-        float r = size * 0.18f;
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.checkbox(cx, cy, size, pct, hover)) {
+                    afterRenderer();
+                    return;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+        float r = ThemeStyle.current().controlShape == ThemeStyle.Shape.SQUARE ? 0f : size * 0.18f;
         if (hover > 0.01f)
             DrawUtils.drawRoundedRect(cx - size * 1.6f, cy - size * 1.6f, cx + size * 1.6f, cy + size * 1.6f,
                     size * 1.6f, M3.alpha(pct > 0.02f ? M3.primary() : M3.onSurface(), (int) (24 * hover)));
@@ -241,15 +338,14 @@ public final class M3Components {
         float pad = h * 0.55f;
         float checkW = selected * (h * 0.5f + 3f);
         float w = pad + checkW + fr.getWidth(text) + pad;
-        float radius = h / 2f;
+        float radius = ThemeStyle.current().controlRadius(h);
         int fill = M3.mix(M3.surfaceContainerLow(), M3.secondaryContainer(), selected);
         DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + w, cy + h / 2f, radius, fill);
         if (hover > 0.01f)
             DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + w, cy + h / 2f, radius,
                     M3.alpha(M3.onSurface(), (int) (16 * hover)));
         if (selected < 0.02f)
-            DrawUtils.drawRoundedOutline(x1, cy - h / 2f, x1 + w, cy + h / 2f, radius, 1f,
-                    M3.alpha(M3.outline(), 130));
+            controlOutline(x1, cy - h / 2f, x1 + w, cy + h / 2f, radius, M3.outline(), 130);
         if (selected > 0.02f) {
             M3Icons.drawCentered(M3Icons.CHECK, x1 + pad + h * 0.25f, cy,
                     M3.mix(M3.onSurfaceVariant(), M3.onSecondaryContainer(), selected), 0.56f);
@@ -268,7 +364,7 @@ public final class M3Components {
         DrawUtils.drawRoundedRect(x1, y1, x2, y2, 0f, fill);
         if (hover > 0.01f)
             DrawUtils.drawRoundedRect(x1, y1, x2, y2, 0f, M3.alpha(M3.onSurface(), (int) (14 * hover)));
-        float radius = (y2 - y1) / 2f;
+        float radius = ThemeStyle.current().controlRadius(y2 - y1);
         // re-round the outer corners only; neighbours stay flush
         boolean[] outer = {first, last, last, first};
         DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, 1f, M3.alpha(M3.outline(), 150), outer);
@@ -292,7 +388,7 @@ public final class M3Components {
         }
         float pad = 4f;
         float w = fr.getWidth(text) + pad * 2f, h = 16f;
-        DrawUtils.drawRoundedRect(cx - w - 2f, cy - h - 2f, cx - 2f, cy - 2f, h / 2f, fill);
+        DrawUtils.drawRoundedRect(cx - w - 2f, cy - h - 2f, cx - 2f, cy - 2f, ThemeStyle.current().controlRadius(h), fill);
         fr.drawString(text, cx - 2f - pad, cy - 2f - h / 2f, fg, fr.CENTREY);
         RenderUtils.resetColorText();
     }
@@ -301,12 +397,13 @@ public final class M3Components {
 
     public static void linearProgress(float x1, float cy, float trackLen, float pct, int fill) {
         float h = 4f;
+        float r = ThemeStyle.current().controlRadius(h);
         float p = Math.max(0f, Math.min(1f, pct));
-        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + trackLen, cy + h / 2f, h / 2f,
+        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + trackLen, cy + h / 2f, r,
                 M3.alpha(fill, 90));
         if (p > 0.004f)
             DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + Math.max(trackLen * p, h),
-                    cy + h / 2f, h / 2f, fill);
+                    cy + h / 2f, r, fill);
         DrawUtils.drawCircle(x1 + 2f, cy, 2f, fill);
     }
 
@@ -318,7 +415,8 @@ public final class M3Components {
         float h = 48f;
         float y2 = y1 + h * pct;
         float yTop = y1 + h - y2;
-        DrawUtils.drawRoundedRect(x1, yTop, x2, y2, 4f, M3.alpha(M3.inverseSurface(), (int) (255 * pct)));
+        DrawUtils.drawRoundedRect(x1, yTop, x2, y2, ThemeStyle.current().panelRadius(4f, x2 - x1, y2 - yTop),
+                M3.alpha(M3.inverseSurface(), (int) (255 * pct)));
         fr.drawString(text, x1 + 16f * pct + 16f, (yTop + y2) / 2f, M3.alpha(M3.inverseOnSurface(), (int) (255 * pct)),
                 fr.CENTREY);
         RenderUtils.resetColorText();
@@ -335,7 +433,8 @@ public final class M3Components {
         float h = 24f;
         float w = fr.getWidth(text) + pad * 2f;
         float y2 = cyBottom;
-        DrawUtils.drawRoundedRect(cx - w / 2f, y2 - h, cx + w / 2f, y2, 4f, M3.inverseSurface());
+        DrawUtils.drawRoundedRect(cx - w / 2f, y2 - h, cx + w / 2f, y2, ThemeStyle.current().panelRadius(4f, w, h),
+                M3.inverseSurface());
         fr.drawString(text, cx, y2 - h / 2f, M3.inverseOnSurface(), fr.CENTREX, fr.CENTREY);
         RenderUtils.resetColorText();
     }
@@ -345,7 +444,7 @@ public final class M3Components {
     /** Material 3 FAB: 56dp square, 16dp corners, primary-container fill. */
     public static void fab(FontRendererExtension<?> unused, String glyph, float cx, float cy,
                            float size, int fill, int fg) {
-        float r = size * 16f / 56f;
+        float r = ThemeStyle.current().panelRadius(size * 16f / 56f, size, size);
         DrawUtils.drawRoundedRect(cx - size / 2f, cy - size / 2f, cx + size / 2f, cy + size / 2f, r, fill);
         M3Icons.drawCentered(glyph, cx, cy, fg, Math.min(0.75f, size / 42f));
     }
@@ -354,7 +453,7 @@ public final class M3Components {
 
     /** A filled text field return the inset x where the text should start. */
     public static float textFieldBg(float x1, float y1, float x2, float y2, float hover, float focus) {
-        float radius = 4f;
+        float radius = ThemeStyle.current().panelRadius(4f, x2 - x1, y2 - y1);
         DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius,
                 M3.mix(M3.surfaceVariant(), M3.surfaceContainerHighest(), hover * 0.5f));
         // bottom indicator: 1dp inactive, 2dp focused, outline -> primary
@@ -382,15 +481,27 @@ public final class M3Components {
             return;
         float thumb = Math.max(height * 0.1f, height * (height / (height + maxScroll)));
         float ty = y + (scroll / -maxScroll) * (height - thumb);
-        DrawUtils.drawRoundedRect(x - 3f, y, x - 1f, y + height, 1f, M3.alpha(M3.surfaceContainerHighest(), 110));
-        DrawUtils.drawRoundedRect(x - 3f, ty, x - 1f, ty + thumb, 1f, M3.alpha(M3.primary(), 220));
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.scrollbar(x, y, height, ty, thumb, 1f)) {
+                    afterRenderer();
+                    return;
+                }
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+        float r = ThemeStyle.current().controlShape == ThemeStyle.Shape.SQUARE ? 0f : 1f;
+        DrawUtils.drawRoundedRect(x - 3f, y, x - 1f, y + height, r, M3.alpha(M3.surfaceContainerHighest(), 110));
+        DrawUtils.drawRoundedRect(x - 3f, ty, x - 1f, ty + thumb, r, M3.alpha(M3.primary(), 220));
     }
 
     public static float pill(FontRendererExtension<?> fr, String text, float x1, float cy, float h,
                              int fill, int fg) {
         float pad = h * 0.52f;
         float w = fr.getWidth(text) + pad * 2f;
-        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + w, cy + h / 2f, h / 2f, fill);
+        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + w, cy + h / 2f, ThemeStyle.current().controlRadius(h), fill);
         fr.drawString(text, x1 + pad, cy, fg, fr.CENTREY);
         RenderUtils.resetColorText();
         return w;
