@@ -10,6 +10,8 @@ import arsenic.gui.design.M3;
 import arsenic.gui.hud.HudEditorScreen;
 import arsenic.gui.hud.HudElement;
 import arsenic.gui.hud.HudStyle;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.main.Arsenic;
 import arsenic.module.Module;
 import arsenic.module.ModuleCategory;
@@ -92,9 +94,9 @@ public class HUD extends Module {
     }
 
     private static final ResourceLocation INVENTORY_TEXTURE = new ResourceLocation("textures/gui/container/inventory.png");
-    private static final float ROW_HEIGHT = 13.5f;
     private static final float PANEL_PAD_L = 5.5f;
     private static final float PANEL_PAD_R = 6.5f;
+    /** Default accent bar width; a theme's wider bar takes the extra space from the padding on its side. */
     private static final float ACCENT_BAR_W = 2f;
 
     private static final float SORT_TOLERANCE = 2f;
@@ -147,14 +149,22 @@ public class HUD extends Module {
             return;
 
         int accent = colorMode.getValue().getColor(4, 0);
+        boolean themedList = replacesList(ThemeStyle.renderer());
 
         // nothing here moves the matrix between strings, so they can share one matrix read
         TTFontRenderer.beginBatch();
         try {
             renderHud(fr, sr, accent);
+            buildEntries(fr);
+            if (!themedList)
+                drawArrayList(fr, sr, Pass.NORMAL);
         } finally {
             TTFontRenderer.endBatch();
         }
+        // a theme renderer may move the matrix, so the rows it draws stay outside the batch
+        if (themedList)
+            drawArrayList(fr, sr, Pass.NORMAL);
+        HudStyle.resetGl();
     };
 
     private void renderHud(FontRendererExtension<?> fr, ScaledResolution sr, int accent) {
@@ -171,10 +181,6 @@ public class HUD extends Module {
             renderKeystrokes(fr, accent);
         if (showScoreboard.getValue())
             renderScoreboard(fr, sr, accent);
-
-        buildEntries(fr);
-        drawArrayList(fr, sr, Pass.NORMAL);
-        HudStyle.resetGl();
     }
 
     @EventLink
@@ -211,56 +217,61 @@ public class HUD extends Module {
         }
     };
 
+    /** Blur mask with the same corners HudStyle.card uses under the theme's HUD roundness. */
+    private static void blurMask(float x1, float y1, float x2, float y2, float baseRadius) {
+        float r = ThemeStyle.current().hudRadius(baseRadius, x2 - x1, y2 - y1);
+        DrawUtils.drawRoundedRect(x1, y1, x2, y2, r, 0xFFFFFFFF);
+    }
+
     private void drawHudBlurMasks(ScaledResolution sr) {
         if (surfaceAlpha() <= 4)
             return;
-        DrawUtils.drawRoundedRect(watermark.x, watermark.y, watermark.x + watermark.width, watermark.y + watermark.height,
-                HudStyle.RADIUS_COMPACT, 0xFFFFFFFF);
+        blurMask(watermark.x, watermark.y, watermark.x + watermark.width, watermark.y + watermark.height,
+                HudStyle.RADIUS_COMPACT);
         if (showCoords.getValue() && mc.thePlayer != null) {
-            DrawUtils.drawRoundedRect(coords.x, coords.y, coords.x + coords.width, coords.y + coords.height,
-                    HudStyle.RADIUS_COMPACT, 0xFFFFFFFF);
+            blurMask(coords.x, coords.y, coords.x + coords.width, coords.y + coords.height,
+                    HudStyle.RADIUS_COMPACT);
         }
         if (showKeybinds.getValue() && keybinds.width > 0 && keybinds.height > 0) {
             boolean hasBinds = Arsenic.getArsenic().getModuleManager().getModules().stream().anyMatch(m -> m.getKeybind() != 0);
             if (hasBinds || mc.currentScreen instanceof HudEditorScreen) {
-                DrawUtils.drawRoundedRect(keybinds.x, keybinds.y, keybinds.x + keybinds.width, keybinds.y + keybinds.height,
-                        HudStyle.RADIUS_CARD, 0xFFFFFFFF);
+                blurMask(keybinds.x, keybinds.y, keybinds.x + keybinds.width, keybinds.y + keybinds.height,
+                        HudStyle.RADIUS_CARD);
             }
         }
         if (showPing.getValue()) {
-            DrawUtils.drawRoundedRect(pingElement.x, pingElement.y, pingElement.x + pingElement.width, pingElement.y + pingElement.height,
-                    HudStyle.RADIUS_COMPACT, 0xFFFFFFFF);
+            blurMask(pingElement.x, pingElement.y, pingElement.x + pingElement.width, pingElement.y + pingElement.height,
+                    HudStyle.RADIUS_COMPACT);
         }
         if (showPotions.getValue() && mc.thePlayer != null
                 && (!mc.thePlayer.getActivePotionEffects().isEmpty() || mc.currentScreen instanceof HudEditorScreen)) {
-            DrawUtils.drawRoundedRect(potions.x, potions.y, potions.x + potions.width, potions.y + potions.height,
-                    HudStyle.RADIUS_CARD, 0xFFFFFFFF);
+            blurMask(potions.x, potions.y, potions.x + potions.width, potions.y + potions.height,
+                    HudStyle.RADIUS_CARD);
         }
         if (showKeystrokes.getValue()) {
             float k = 20f, gap = 2f;
             float x0 = HudStyle.snap(keystrokes.x);
             float y0 = HudStyle.snap(keystrokes.y);
-            DrawUtils.drawRoundedRect(x0 + k + gap, y0, x0 + k * 2f + gap, y0 + k, 5.5f, 0xFFFFFFFF);
+            blurMask(x0 + k + gap, y0, x0 + k * 2f + gap, y0 + k, 5.5f);
             float row2 = y0 + k + gap;
-            DrawUtils.drawRoundedRect(x0, row2, x0 + k, row2 + k, 5.5f, 0xFFFFFFFF);
-            DrawUtils.drawRoundedRect(x0 + k + gap, row2, x0 + k * 2f + gap, row2 + k, 5.5f, 0xFFFFFFFF);
-            DrawUtils.drawRoundedRect(x0 + (k + gap) * 2f, row2, x0 + k * 3f + gap * 2f, row2 + k, 5.5f, 0xFFFFFFFF);
+            blurMask(x0, row2, x0 + k, row2 + k, 5.5f);
+            blurMask(x0 + k + gap, row2, x0 + k * 2f + gap, row2 + k, 5.5f);
+            blurMask(x0 + (k + gap) * 2f, row2, x0 + k * 3f + gap * 2f, row2 + k, 5.5f);
             float row3 = row2 + k + gap;
             float half = (k * 3f + gap * 2f - gap) / 2f;
-            DrawUtils.drawRoundedRect(x0, row3, x0 + half, row3 + k, 5.5f, 0xFFFFFFFF);
-            DrawUtils.drawRoundedRect(x0 + half + gap, row3, x0 + half * 2f + gap, row3 + k, 5.5f, 0xFFFFFFFF);
+            blurMask(x0, row3, x0 + half, row3 + k, 5.5f);
+            blurMask(x0 + half + gap, row3, x0 + half * 2f + gap, row3 + k, 5.5f);
             float row4 = row3 + k + gap;
             float spaceH = 12f;
             float rowW = k * 3f + gap * 2f;
-            DrawUtils.drawRoundedRect(x0, row4, x0 + rowW, row4 + spaceH, 4.5f, 0xFFFFFFFF);
+            blurMask(x0, row4, x0 + rowW, row4 + spaceH, 4.5f);
             float row5 = row4 + spaceH + gap;
-            DrawUtils.drawRoundedRect(x0, row5, x0 + rowW, row5 + spaceH, 4.5f, 0xFFFFFFFF);
+            blurMask(x0, row5, x0 + rowW, row5 + spaceH, 4.5f);
         }
         if (showScoreboard.getValue() && sidebarObjective() != null) {
             float x1 = HudStyle.snap(sr.getScaledWidth() + scoreboard.x - scoreboard.width);
             float y1 = HudStyle.snap(scoreboard.y);
-            DrawUtils.drawRoundedRect(x1, y1, x1 + scoreboard.width, y1 + scoreboard.height,
-                    HudStyle.RADIUS_CARD, 0xFFFFFFFF);
+            blurMask(x1, y1, x1 + scoreboard.width, y1 + scoreboard.height, HudStyle.RADIUS_CARD);
         }
     }
 
@@ -272,10 +283,39 @@ public class HUD extends Module {
 
     private enum Pass { NORMAL, BLOOM, BLUR }
 
+    /** Height of one module list row (13.5 unless the theme changes it). */
+    private static float rowHeight() {
+        return ThemeStyle.current().listRowHeight;
+    }
+
+    /** The theme's list background, or this module's Background setting when the theme says USER. */
+    private ArrayListBackground listBackground(ThemeStyle ts) {
+        if (ts.listBackground == ThemeStyle.ListBackground.USER)
+            return arraylistBackground.getValue();
+        try {
+            return ArrayListBackground.valueOf(ts.listBackground.name());
+        } catch (IllegalArgumentException e) {
+            return arraylistBackground.getValue();
+        }
+    }
+
+    /** True when the theme renderer draws the module list rows; a renderer that throws is turned off. */
+    private static boolean replacesList(ThemeRenderer renderer) {
+        if (renderer == null)
+            return false;
+        try {
+            return renderer.replacesArrayList();
+        } catch (Throwable t) {
+            ThemeStyle.rendererFailed(t);
+            return false;
+        }
+    }
+
     private void buildEntries(FontRendererExtension<?> fr) {
         long now = System.currentTimeMillis();
         float dt = clock.tick();
         FontRendererExtension<?> labelFr = HudStyle.label();
+        float rowHeight = rowHeight();
 
         Set<Module> enabled = Arsenic.getArsenic().getModuleManager().getEnabledModules()
                 .stream().filter(m -> !m.isHidden()).collect(Collectors.toSet());
@@ -309,7 +349,7 @@ public class HUD extends Module {
 
             if (entry.opacity > 0.004f) {
                 visible.add(entry);
-                y += ROW_HEIGHT * entry.opacity;
+                y += rowHeight * entry.opacity;
             }
         }
 
@@ -329,35 +369,71 @@ public class HUD extends Module {
         if (visible.isEmpty())
             return;
 
+        ThemeStyle ts = ThemeStyle.current();
+        ThemeRenderer renderer = ThemeStyle.renderer();
+        boolean themed = replacesList(renderer);
+
         FontRendererExtension<?> labelFr = HudStyle.label();
-        ArrayListBackground bg = arraylistBackground.getValue();
+        ArrayListBackground bg = listBackground(ts);
+        boolean alignLeft = ts.listAlign == ThemeStyle.Align.LEFT;
+        boolean barLeft = ts.listBar == ThemeStyle.Side.LEFT;
+        float barW = ts.listBar == ThemeStyle.Side.NONE ? 0f : ts.listBarWidth;
+        float extraPad = Math.max(0f, barW - ACCENT_BAR_W);
+        float padL = PANEL_PAD_L + (barLeft ? extraPad : 0f);
+        float padR = PANEL_PAD_R + (barLeft ? 0f : extraPad);
+        float barR = Math.min(barW / 2f, ts.hudRoundness);
+        float rowHeight = rowHeight();
+
         float rightAnchor = HudStyle.snap(sr.getScaledWidth() + arrayList.x);
         float topAnchor = HudStyle.snap(arrayList.y);
         int baseAlpha = surfaceAlpha();
 
         float maxRowW = 64f;
-        float totalBottom = topAnchor + ROW_HEIGHT;
+        for (Entry entry : visible)
+            maxRowW = Math.max(maxRowW, HudStyle.snap(entry.width + padL + padR));
+        // left aligned rows start at the left edge of the element box
+        float leftAnchor = HudStyle.snap(rightAnchor - Math.max(72f, (float) Math.ceil(maxRowW)));
+        float totalBottom = topAnchor + rowHeight;
 
         for (int i = 0; i < visible.size(); i++) {
             Entry entry = visible.get(i);
             float rowY = HudStyle.snap(topAnchor + entry.y);
-            float rowH = HudStyle.snap(ROW_HEIGHT);
+            float rowH = HudStyle.snap(rowHeight);
             float rowMid = rowY + rowH / 2f;
             int color = colorMode.getValue().getColor(4, i * 160);
 
             float slide = (1f - entry.opacity) * 14f;
-            float rowW = HudStyle.snap(entry.width + PANEL_PAD_L + PANEL_PAD_R);
-            maxRowW = Math.max(maxRowW, rowW);
+            float rowW = HudStyle.snap(entry.width + padL + padR);
             totalBottom = Math.max(totalBottom, rowY + rowH);
 
-            float rowRight = HudStyle.snap(rightAnchor + slide);
-            float rowLeft = HudStyle.snap(rowRight - rowW);
+            float rowLeft, rowRight;
+            if (alignLeft) {
+                rowLeft = HudStyle.snap(leftAnchor - slide);
+                rowRight = HudStyle.snap(rowLeft + rowW);
+            } else {
+                rowRight = HudStyle.snap(rightAnchor + slide);
+                rowLeft = HudStyle.snap(rowRight - rowW);
+            }
             float alphaPct = pass == Pass.BLOOM ? 1f : entry.opacity;
             int rowPanelAlpha = (int) (baseAlpha * entry.opacity);
-            float pillGap = 1.5f;
+            float pillGap = Math.min(ts.listRowGap, Math.max(0f, rowH - 6f));
             float boxY1 = bg == ArrayListBackground.PANEL ? HudStyle.snap(rowY + pillGap * 0.5f) : rowY;
             float boxY2 = bg == ArrayListBackground.PANEL ? HudStyle.snap(rowY + rowH - pillGap * 0.5f) : HudStyle.snap(rowY + rowH);
-            float boxR = Math.min(3f, (boxY2 - boxY1) / 2f);
+            float boxR = Math.min(3f * ts.hudRoundness, (boxY2 - boxY1) / 2f);
+
+            if (themed) {
+                // the renderer only draws the normal pass: its rows get no blur or bloom
+                if (pass != Pass.NORMAL)
+                    continue;
+                try {
+                    renderer.arrayListRow(new ThemeRenderer.ArrayListRow(i, entry.name, entry.info,
+                            rowLeft, boxY1, rowRight, boxY2, color, entry.opacity, rowPanelAlpha, labelFr, fr));
+                    continue;
+                } catch (Throwable t) {
+                    ThemeStyle.rendererFailed(t);
+                    themed = false;
+                }
+            }
 
             if (pass == Pass.BLUR) {
                 if (bg == ArrayListBackground.PANEL) {
@@ -377,16 +453,18 @@ public class HUD extends Module {
                 }
             }
 
-            if (bg != ArrayListBackground.NONE) {
+            if (bg != ArrayListBackground.NONE && barW > 0f) {
                 int barColor = M3.alpha(color, (int) (255 * alphaPct));
+                float barX1 = barLeft ? rowLeft : rowRight - barW;
+                float barX2 = barLeft ? rowLeft + barW : rowRight;
                 if (bg == ArrayListBackground.PANEL) {
-                    DrawUtils.drawRoundedRect(rowRight - ACCENT_BAR_W, boxY1, rowRight, boxY2, 1f, barColor);
+                    DrawUtils.drawRoundedRect(barX1, boxY1, barX2, boxY2, barR, barColor);
                 } else {
-                    DrawUtils.drawRect(rowRight - ACCENT_BAR_W, boxY1, rowRight, boxY2, barColor);
+                    DrawUtils.drawRect(barX1, boxY1, barX2, boxY2, barColor);
                 }
             }
 
-            float textLeft = HudStyle.snap(rowLeft + PANEL_PAD_L);
+            float textLeft = HudStyle.snap(rowLeft + padL);
             int nameCol = M3.alpha(color, (int) (255 * alphaPct));
             labelFr.drawString(entry.name, textLeft, rowMid, nameCol, labelFr.CENTREY);
 
@@ -425,12 +503,14 @@ public class HUD extends Module {
         }
 
         String title = "Arsenic";
+        boolean showBar = ThemeStyle.current().watermarkBar;
         float h = 18f;
         float padX = 6.5f;
         float titleW = labelFr.getWidth(title);
         float chipPadX = 4.5f;
         float chipW = suffix == null ? 0f : HudStyle.snap(fr.getWidth(suffix) + chipPadX * 2f);
-        float w = HudStyle.snap(padX + 4.5f + titleW + (suffix == null ? padX : 5.5f + chipW + 3f));
+        float lead = showBar ? padX + 4.5f : padX;
+        float w = HudStyle.snap(lead + titleW + (suffix == null ? padX : 5.5f + chipW + 3f));
 
         float x = HudStyle.snap(watermark.x);
         float y = HudStyle.snap(watermark.y);
@@ -440,11 +520,15 @@ public class HUD extends Module {
 
         HudStyle.card(x, y, x + w, y + h, HudStyle.RADIUS_COMPACT, surfaceAlpha());
 
-        float barH = 9f;
-        float barX = HudStyle.snap(x + 4.5f);
-        DrawUtils.drawRoundedRect(barX, HudStyle.snap(cy - barH / 2f), barX + 2f, HudStyle.snap(cy + barH / 2f), 1f, color);
-
-        float titleX = HudStyle.snap(barX + 5.5f);
+        float titleX;
+        if (showBar) {
+            float barH = 9f;
+            float barX = HudStyle.snap(x + 4.5f);
+            DrawUtils.drawRoundedRect(barX, HudStyle.snap(cy - barH / 2f), barX + 2f, HudStyle.snap(cy + barH / 2f), 1f, color);
+            titleX = HudStyle.snap(barX + 5.5f);
+        } else {
+            titleX = HudStyle.snap(x + padX);
+        }
         labelFr.drawString(title, titleX, cy, M3.onSurface(), labelFr.CENTREY);
 
         if (suffix != null) {
@@ -626,6 +710,7 @@ public class HUD extends Module {
         float pad = 4f;
         float iconBox = 14f;
         float iconDraw = 12f;
+        float iconR = ThemeStyle.current().hudRadius(4f, iconBox, iconBox);
         float rowH = 17f;
         float chipPadX = 4.5f;
 
@@ -658,7 +743,7 @@ public class HUD extends Module {
             float ibX = HudStyle.snap(x + pad);
             float ibY = HudStyle.snap(rowCy - iconBox / 2f);
 
-            DrawUtils.drawRoundedRect(ibX, ibY, ibX + iconBox, ibY + iconBox, 4f,
+            DrawUtils.drawRoundedRect(ibX, ibY, ibX + iconBox, ibY + iconBox, iconR,
                     M3.alpha(M3.surfaceContainerHigh(), 210));
 
             Potion potion = Potion.potionTypes[effect.getPotionID()];
@@ -744,6 +829,7 @@ public class HUD extends Module {
         float y1 = HudStyle.snap(y);
         float x2 = HudStyle.snap(x + w);
         float y2 = HudStyle.snap(y + h);
+        radius = ThemeStyle.current().hudRadius(radius, x2 - x1, y2 - y1);
         int a = surfaceAlpha();
         int restFill = M3.alpha(M3.mix(M3.surfaceContainerLow(), M3.surfaceContainer(), 0.45f), a);
         int activeFill = M3.alpha(M3.primaryContainer(), Math.min(255, a + 25));

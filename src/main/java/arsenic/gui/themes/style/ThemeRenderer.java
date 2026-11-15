@@ -63,7 +63,12 @@ public interface ThemeRenderer {
         return false;
     }
 
-    /** One row of the HUD module list. Only called when {@link #replacesArrayList()} is true. */
+    /**
+     * One row of the HUD module list. Only called when {@link #replacesArrayList()} is true.
+     * <p>
+     * Rows are drawn outside the HUD text batch, so you may push, move and pop the GL matrix (pop
+     * what you push). Rows you draw get no blur or bloom pass.
+     */
     default void arrayListRow(ArrayListRow row) {
     }
 
