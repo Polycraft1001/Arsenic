@@ -33,6 +33,24 @@ public final class ThemeStyle {
 
     public enum Align { RIGHT, LEFT }
 
+    /**
+     * Module cards of the ClickGUI. FILLED: fill and outline (default). OUTLINED: outline only.
+     * FLAT: fill only. MINIMAL: nothing until hovered or opened.
+     */
+    public enum CardStyle { FILLED, OUTLINED, FLAT, MINIMAL }
+
+    /**
+     * How an enabled module stands out. TINT: light accent tint (default). FILL: strong accent fill.
+     * BAR: accent bar on the left. OUTLINE: accent outline. TEXT: only the name turns accent.
+     */
+    public enum EnabledIndicator { TINT, FILL, BAR, OUTLINE, TEXT }
+
+    /**
+     * Sidebar categories. DEFAULT: the client's pill. BAR: accent bar on the left of the selected one.
+     * BLOCK: square accent block. TEXT: no background, only the colour changes.
+     */
+    public enum NavStyle { DEFAULT, BAR, BLOCK, TEXT }
+
     private static final ThemeStyle FALLBACK = new ThemeStyle();
     private static final Map<Theme, ThemeStyle> STYLES = new WeakHashMap<>();
     private static final Map<Theme, ThemeRenderer> RENDERERS = new WeakHashMap<>();
@@ -56,6 +74,17 @@ public final class ThemeStyle {
     /** Multiplies the ClickGUI spacing unit (margins, gaps). Range 0.75..1.35. */
     public float spacing = 1f;
     public FontChoice font = FontChoice.DEFAULT;
+
+    // ---- ClickGUI module cards and sidebar ----
+    public CardStyle cardStyle = CardStyle.FILLED;
+    public EnabledIndicator enabledIndicator = EnabledIndicator.TINT;
+    /** Multiplies the module card radius (12 by default), on top of {@link #roundness}. Range 0..2. */
+    public float cardRoundness = 1f;
+    /** Vertical gap between module cards. Range 0..16. */
+    public float moduleGap = 5f;
+    /** The open/close arrow on the left of module cards. */
+    public boolean cardChevron = true;
+    public NavStyle navStyle = NavStyle.DEFAULT;
 
     // ---- HUD ----
     /** Multiplies HUD card corner radii. Range 0..2.5. */
@@ -82,12 +111,17 @@ public final class ThemeStyle {
         edgeGlow = clamp(edgeGlow, 0f, 3f);
         animationSpeed = clamp(animationSpeed, 0.25f, 4f);
         spacing = clamp(spacing, 0.75f, 1.35f);
+        cardRoundness = clamp(cardRoundness, 0f, 2f);
+        moduleGap = clamp(moduleGap, 0f, 16f);
         hudRoundness = clamp(hudRoundness, 0f, 2.5f);
         listBarWidth = clamp(listBarWidth, 0.5f, 6f);
         listRowHeight = clamp(listRowHeight, 9f, 24f);
         listRowGap = clamp(listRowGap, 0f, 6f);
         if (controlShape == null) controlShape = Shape.PILL;
         if (font == null) font = FontChoice.DEFAULT;
+        if (cardStyle == null) cardStyle = CardStyle.FILLED;
+        if (enabledIndicator == null) enabledIndicator = EnabledIndicator.TINT;
+        if (navStyle == null) navStyle = NavStyle.DEFAULT;
         if (listBackground == null) listBackground = ListBackground.USER;
         if (listBar == null) listBar = Side.RIGHT;
         if (listAlign == null) listAlign = Align.RIGHT;
@@ -215,6 +249,21 @@ public final class ThemeStyle {
         s.spacing = num(o, "spacing", s.spacing);
         s.font = enm(o, "font", FontChoice.class, s.font);
 
+        JsonObject gui = obj(o, "gui");
+        if (gui != null) {
+            JsonObject card = obj(gui, "moduleCard");
+            if (card != null) {
+                s.cardStyle = enm(card, "style", CardStyle.class, s.cardStyle);
+                s.enabledIndicator = enm(card, "enabled", EnabledIndicator.class, s.enabledIndicator);
+                s.cardRoundness = num(card, "roundness", s.cardRoundness);
+                s.moduleGap = num(card, "gap", s.moduleGap);
+                s.cardChevron = bool(card, "chevron", s.cardChevron);
+            }
+            JsonObject nav = obj(gui, "nav");
+            if (nav != null)
+                s.navStyle = enm(nav, "style", NavStyle.class, s.navStyle);
+        }
+
         JsonObject hud = obj(o, "hud");
         if (hud != null) {
             s.hudRoundness = num(hud, "roundness", s.hudRoundness);
@@ -244,6 +293,18 @@ public final class ThemeStyle {
         o.addProperty("animationSpeed", animationSpeed);
         o.addProperty("spacing", spacing);
         o.addProperty("font", font.name());
+        JsonObject card = new JsonObject();
+        card.addProperty("style", cardStyle.name());
+        card.addProperty("enabled", enabledIndicator.name());
+        card.addProperty("roundness", cardRoundness);
+        card.addProperty("gap", moduleGap);
+        card.addProperty("chevron", cardChevron);
+        JsonObject nav = new JsonObject();
+        nav.addProperty("style", navStyle.name());
+        JsonObject gui = new JsonObject();
+        gui.add("moduleCard", card);
+        gui.add("nav", nav);
+        o.add("gui", gui);
         JsonObject list = new JsonObject();
         list.addProperty("background", listBackground.name());
         list.addProperty("bar", listBar.name());

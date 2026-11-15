@@ -14,6 +14,8 @@ import arsenic.gui.design.Hover;
 import arsenic.gui.design.M3;
 import arsenic.gui.design.M3Icons;
 import arsenic.gui.themes.ThemeManager;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.main.Arsenic;
 import arsenic.module.Module;
 import arsenic.module.property.Group;
@@ -153,21 +155,28 @@ public class ModuleComponent extends Component implements IContainer<PropertyCom
         float openPct = openTimer.getPercent();
         float hover = hoverPct();
 
+        ThemeStyle style = ThemeStyle.current();
+        ThemeStyle.EnabledIndicator indicator = style.enabledIndicator;
         float pad = height * 0.4f;
-        float radius = 12f;
         float cardY2 = y2 + expandY;
+        float radius = style.panelRadius(12f * style.cardRoundness, x2 - x1, cardY2 - y1);
 
         int fill = M3.mix(M3.surfaceContainerLow(), M3.surfaceContainerHigh(), Math.max(hover * 0.75f, openPct * 0.6f));
-        if (enabledPct > 0.01f)
-            fill = M3.mix(fill, M3.primaryContainer(), enabledPct * 0.20f);
-        DrawUtils.drawRoundedRect(x1, y1, x2, cardY2, radius, fill);
-        DrawUtils.drawRoundedOutline(x1, y1, x2, cardY2, radius, 1f,
-                M3.alpha(enabledPct > 0.5f ? M3.primary() : M3.outlineVariant(), enabledPct > 0.5f ? 90 : 90));
+        if (enabledPct > 0.01f) {
+            if (indicator == ThemeStyle.EnabledIndicator.TINT)
+                fill = M3.mix(fill, M3.primaryContainer(), enabledPct * 0.20f);
+            else if (indicator == ThemeStyle.EnabledIndicator.FILL)
+                fill = M3.mix(fill, M3.primaryContainer(), enabledPct * 0.85f);
+        }
+        if (!drawCustomCard(cardY2, radius, fill, enabledPct, hover, openPct))
+            drawCard(style, cardY2, radius, fill, enabledPct, hover, openPct);
 
         float chevronCx = x1 + pad * 1.1f;
         chevronZoneX2 = chevronCx + pad;
-        int chevronColor = M3.alpha(M3.onSurfaceVariant(), (int) (160 + 85 * Math.max(hover, openPct)));
-        UITheme.chevron(chevronCx, midPointY, height * 0.22f, Math.max(1f, height * 0.045f), chevronColor, openPct);
+        if (style.cardChevron) {
+            int chevronColor = M3.alpha(M3.onSurfaceVariant(), (int) (160 + 85 * Math.max(hover, openPct)));
+            UITheme.chevron(chevronCx, midPointY, height * 0.22f, Math.max(1f, height * 0.045f), chevronColor, openPct);
+        }
 
         buttonComponent.updateComponent(posInfo, ri);
         toggleZoneX1 = Math.min(x2, buttonComponent.getTrackX1()) - pad * 0.5f;
@@ -208,8 +217,10 @@ public class ModuleComponent extends Component implements IContainer<PropertyCom
             hiddenZoneX1 = hiddenZoneX2 = hiddenChipRight;
         }
 
-        float textX = chevronZoneX2 + pad * 0.3f;
-        int titleColor = M3.mix(M3.onSurfaceVariant(), M3.primary(), enabledPct);
+        float textX = style.cardChevron ? chevronZoneX2 + pad * 0.3f : x1 + pad;
+        int titleColor = indicator == ThemeStyle.EnabledIndicator.FILL
+                ? M3.mix(M3.onSurfaceVariant(), M3.onPrimaryContainer(), enabledPct)
+                : M3.mix(M3.onSurfaceVariant(), M3.primary(), enabledPct);
         M3.label().drawString(name, textX, midPointY, titleColor, M3.label().CENTREY);
         RenderUtils.resetColorText();
 
@@ -260,6 +271,59 @@ public class ModuleComponent extends Component implements IContainer<PropertyCom
         return expandY + height;
     }
 
+    /** Lets the theme's renderer draw the card. False when there is none, it declined, or it crashed. */
+    private boolean drawCustomCard(float cardY2, float radius, int fill, float enabledPct, float hover, float openPct) {
+        ThemeRenderer renderer = ThemeStyle.renderer();
+        if (renderer == null)
+            return false;
+        try {
+            boolean drawn = renderer.moduleCard(new ThemeRenderer.ModuleCard(name, self.getDescription(),
+                    x1, y1, x2, y2, cardY2, radius, fill, enabledPct, hover, openPct));
+            RenderUtils.resetColorText();
+            return drawn;
+        } catch (Throwable t) {
+            RenderUtils.resetColorText();
+            ThemeStyle.rendererFailed(t);
+            return false;
+        }
+    }
+
+    /** The card background in the theme's card style; FILLED + TINT is the original look. */
+    private void drawCard(ThemeStyle style, float cardY2, float radius, int fill, float enabledPct, float hover, float openPct) {
+        ThemeStyle.CardStyle cardStyle = style.cardStyle;
+        ThemeStyle.EnabledIndicator indicator = style.enabledIndicator;
+
+        if (cardStyle == ThemeStyle.CardStyle.FILLED || cardStyle == ThemeStyle.CardStyle.FLAT) {
+            DrawUtils.drawRoundedRect(x1, y1, x2, cardY2, radius, fill);
+        } else {
+            // OUTLINED / MINIMAL: see-through, the fill only fades in on hover, open or a FILL indicator
+            float show = Math.max(hover * 0.6f, openPct * 0.5f);
+            if (indicator == ThemeStyle.EnabledIndicator.FILL)
+                show = Math.max(show, enabledPct * 0.85f);
+            if (show > 0.01f)
+                DrawUtils.drawRoundedRect(x1, y1, x2, cardY2, radius, M3.alpha(fill, (int) (255 * show)));
+        }
+
+        boolean outlined = cardStyle == ThemeStyle.CardStyle.FILLED || cardStyle == ThemeStyle.CardStyle.OUTLINED;
+        if (outlined && style.borderWidth > 0f) {
+            boolean lit = enabledPct > 0.5f
+                    && (indicator == ThemeStyle.EnabledIndicator.TINT || indicator == ThemeStyle.EnabledIndicator.FILL);
+            DrawUtils.drawRoundedOutline(x1, y1, x2, cardY2, radius, style.borderWidth,
+                    M3.alpha(lit ? M3.primary() : M3.outlineVariant(), style.borderAlpha(90)));
+        }
+
+        if (enabledPct <= 0.01f)
+            return;
+        if (indicator == ThemeStyle.EnabledIndicator.OUTLINE) {
+            DrawUtils.drawRoundedOutline(x1, y1, x2, cardY2, radius, Math.max(1f, style.borderWidth),
+                    M3.alpha(M3.primary(), (int) (Math.max(120, style.borderAlpha(220)) * enabledPct)));
+        } else if (indicator == ThemeStyle.EnabledIndicator.BAR) {
+            float inset = height * 0.25f;
+            DrawUtils.drawRoundedRect(x1 + 3f, y1 + inset, x1 + 5.5f, y2 - inset, 1.25f,
+                    M3.alpha(M3.primary(), (int) (255 * enabledPct)));
+        }
+    }
+
     private int visibleGroups() {
         int n = 0;
         for (Group group : Group.values())
@@ -280,7 +344,7 @@ public class ModuleComponent extends Component implements IContainer<PropertyCom
             boolean active = group == selected;
             boolean hover = Hover.test(groupKeys[group.ordinal()], bx1, y, right, y + rowH);
             if (active || hover)
-                DrawUtils.drawRoundedRect(bx1, y, right, y + rowH, rowH * 0.4f,
+                DrawUtils.drawRoundedRect(bx1, y, right, y + rowH, ThemeStyle.current().chipRadius(rowH * 0.4f),
                         active ? M3.alpha(M3.secondaryContainer(), (int) (230 * openPct))
                                : M3.alpha(M3.surfaceContainerHighest(), (int) (150 * openPct)));
 

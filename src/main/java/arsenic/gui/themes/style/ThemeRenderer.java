@@ -24,6 +24,22 @@ public interface ThemeRenderer {
         return false;
     }
 
+    /**
+     * Background of one module card in the ClickGUI. The client still draws the chevron, the name,
+     * the chips, the switch and the settings on top of what you draw.
+     */
+    default boolean moduleCard(ModuleCard card) {
+        return false;
+    }
+
+    /**
+     * One category of the ClickGUI sidebar (Combat, Movement...), icon and name included. Return true
+     * when you drew the whole item.
+     */
+    default boolean navItem(NavItem item) {
+        return false;
+    }
+
     /** Background card of a HUD element (watermark, coordinates, keybinds, potions, scoreboard...). */
     default boolean hudCard(float x1, float y1, float x2, float y2, float radius, int alpha) {
         return false;
@@ -70,6 +86,60 @@ public interface ThemeRenderer {
      * what you push). Rows you draw get no blur or bloom pass.
      */
     default void arrayListRow(ArrayListRow row) {
+    }
+
+    /** One module card of the ClickGUI. */
+    final class ModuleCard {
+        public final String name;
+        /** May be null or empty. */
+        public final String description;
+        /** The header (the always visible part): x1, y1, x2, headerY2. */
+        public final float x1, y1, x2, headerY2;
+        /** Bottom of the whole card, settings included while it is open (== headerY2 when closed). */
+        public final float y2;
+        /** The corner radius the theme style asks for. */
+        public final float radius;
+        /** The fill the default card would use (hover, open and enabled tint already mixed in). */
+        public final int fill;
+        /** 0..1 animations. */
+        public final float enabled, hover, open;
+
+        public ModuleCard(String name, String description, float x1, float y1, float x2, float headerY2, float y2,
+                          float radius, int fill, float enabled, float hover, float open) {
+            this.name = name;
+            this.description = description;
+            this.x1 = x1;
+            this.y1 = y1;
+            this.x2 = x2;
+            this.headerY2 = headerY2;
+            this.y2 = y2;
+            this.radius = radius;
+            this.fill = fill;
+            this.enabled = enabled;
+            this.hover = hover;
+            this.open = open;
+        }
+    }
+
+    /** One category of the ClickGUI sidebar. */
+    final class NavItem {
+        public final String name;
+        public final float x1, y1, x2, y2;
+        /** 0..1 animations: the selected category, and the mouse over it. */
+        public final float selected, hover;
+        public final FontRendererExtension<?> font;
+
+        public NavItem(String name, float x1, float y1, float x2, float y2, float selected, float hover,
+                       FontRendererExtension<?> font) {
+            this.name = name;
+            this.x1 = x1;
+            this.y1 = y1;
+            this.x2 = x2;
+            this.y2 = y2;
+            this.selected = selected;
+            this.hover = hover;
+            this.font = font;
+        }
     }
 
     /** Everything about one module list row. The box is already laid out and animated. */

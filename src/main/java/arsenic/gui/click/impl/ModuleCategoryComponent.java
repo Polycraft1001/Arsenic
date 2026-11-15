@@ -6,6 +6,8 @@ import arsenic.gui.design.M3;
 import arsenic.gui.design.M3Components;
 import arsenic.gui.design.M3Icons;
 import arsenic.gui.themes.ThemeManager;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.main.Arsenic;
 import arsenic.module.ModuleCategory;
 import arsenic.module.ModuleTier;
@@ -89,9 +91,53 @@ refreshListing();
     @Override
     protected float drawComponent(RenderInfo ri) {
         expandX = 0;
-        M3Components.navItem(ri.getFr(), getName(), M3Icons.category(getName()), x1, y1, x2, y2,
-                enabledTimer.getPercent(), hoverTimer.getPercent(), true);
+        float selected = enabledTimer.getPercent(), hover = hoverTimer.getPercent();
+
+        ThemeRenderer renderer = ThemeStyle.renderer();
+        if (renderer != null) {
+            try {
+                boolean drawn = renderer.navItem(new ThemeRenderer.NavItem(getName(), x1, y1, x2, y2, selected, hover, ri.getFr()));
+                RenderUtils.resetColorText();
+                if (drawn)
+                    return height;
+            } catch (Throwable t) {
+                RenderUtils.resetColorText();
+                ThemeStyle.rendererFailed(t);
+            }
+        }
+
+        ThemeStyle.NavStyle navStyle = ThemeStyle.current().navStyle;
+        if (navStyle == ThemeStyle.NavStyle.DEFAULT) {
+            M3Components.navItem(ri.getFr(), getName(), M3Icons.category(getName()), x1, y1, x2, y2,
+                    selected, hover, true);
+            return height;
+        }
+        drawStyledNav(navStyle, selected, hover);
         return height;
+    }
+
+    /** The BAR, BLOCK and TEXT sidebar styles: square, flat, no pill. */
+    private void drawStyledNav(ThemeStyle.NavStyle navStyle, float selected, float hover) {
+        float inset = 6f;
+        float bx1 = x1 + inset, bx2 = x2 - inset;
+        float h = y2 - y1, cy = (y1 + y2) / 2f;
+
+        int textColor = M3.mix(M3.mix(M3.onSurfaceVariant(), M3.onSurface(), hover), M3.primary(), selected);
+        if (navStyle != ThemeStyle.NavStyle.TEXT && hover > 0.01f)
+            DrawUtils.drawRect(bx1, y1 + 2f, bx2, y2 - 2f, M3.alpha(M3.surfaceContainerHighest(), (int) (90 * hover)));
+
+        if (navStyle == ThemeStyle.NavStyle.BLOCK && selected > 0.01f) {
+            DrawUtils.drawRect(bx1, y1 + 2f, bx2, y2 - 2f, M3.alpha(M3.primaryContainer(), (int) (235 * selected)));
+            textColor = M3.mix(textColor, M3.onPrimaryContainer(), selected);
+        } else if (navStyle == ThemeStyle.NavStyle.BAR && selected > 0.01f) {
+            DrawUtils.drawRect(bx1, y1 + h * 0.22f, bx1 + 3f, y2 - h * 0.22f, M3.alpha(M3.primary(), (int) (255 * selected)));
+        }
+
+        float iconCx = bx1 + 14f;
+        M3Icons.drawCentered(M3Icons.category(getName()), iconCx, cy, textColor);
+        M3.label().drawString(getName(), iconCx + 12f, cy, textColor, M3.label().CENTREY);
+        RenderUtils.resetColorText();
+        GlStateManager.color(1f, 1f, 1f, 1f);
     }
 
     @Override
@@ -116,7 +162,7 @@ refreshListing();
     protected void drawSection(List<? extends Component> l, PosInfo pi, RenderInfo ri) {
         pi.moveY(scroll);
         float temp = pi.getY();
-        float gap = 5f;
+        float gap = ThemeStyle.current().moduleGap;
         l.forEach(moduleComponent -> pi.moveY(moduleComponent.updateComponent(pi, ri) + gap));
         temp = pi.getY() - temp;
         if(temp > maxHeight)
