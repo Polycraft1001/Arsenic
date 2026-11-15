@@ -2,6 +2,8 @@ package arsenic.gui.click;
 
 import arsenic.utils.java.MathUtils;
 import arsenic.gui.themes.ThemeManager;
+import arsenic.gui.themes.style.ThemeRenderer;
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.utils.java.ColorUtils;
 import arsenic.utils.render.DrawUtils;
 import arsenic.utils.render.RenderUtils;
@@ -17,21 +19,40 @@ public final class UITheme {
         return guiHeight / 100f;
     }
 
+    /** Spacing scaled by the theme's {@link ThemeStyle#spacing}. */
     public static float space(float guiHeight, float steps) {
-        return unit(guiHeight) * steps;
+        return unit(guiHeight) * steps * ThemeStyle.current().spacing;
     }
 
-    public static float radiusPill(float height) { return height / 2f; }
-    public static float radiusCard(float height) { return Math.max(3f, height * 0.28f); }
-    public static float radiusChip(float height) { return Math.max(2f, height * 0.34f); }
+    public static float radiusPill(float height) { return ThemeStyle.current().controlRadius(height); }
+    public static float radiusCard(float height) {
+        ThemeStyle ts = ThemeStyle.current();
+        return Math.min(height / 2f, Math.max(3f, height * 0.28f) * ts.roundness);
+    }
+    public static float radiusChip(float height) {
+        return ThemeStyle.current().chipRadius(Math.max(2f, height * 0.34f));
+    }
 
-    public static final int DUR_PRESS  = 90;
-    public static final int DUR_HOVER  = 160;
-    public static final int DUR_TOGGLE = 260;
-    public static final int DUR_EXPAND = 320;
+    private static final int BASE_PRESS = 90, BASE_HOVER = 160, BASE_TOGGLE = 260, BASE_EXPAND = 320;
+
+    /** Animation lengths in ms; {@link #syncAnimations()} scales them by the theme's animation speed. */
+    public static int DUR_PRESS  = BASE_PRESS;
+    public static int DUR_HOVER  = BASE_HOVER;
+    public static int DUR_TOGGLE = BASE_TOGGLE;
+    public static int DUR_EXPAND = BASE_EXPAND;
+
+    /** Called once per GUI frame by {@link GuiStyle#tickFrame()}. */
+    public static void syncAnimations() {
+        float speed = ThemeStyle.current().animationSpeed;
+        DUR_PRESS = Math.round(BASE_PRESS / speed);
+        DUR_HOVER = Math.round(BASE_HOVER / speed);
+        DUR_TOGGLE = Math.round(BASE_TOGGLE / speed);
+        DUR_EXPAND = Math.round(BASE_EXPAND / speed);
+    }
 
     public static int expandDuration(float contentHeight) {
-        return (int) MathUtils.clamp(110 + Math.abs(contentHeight) * 1.15f, 150, 420);
+        float base = Math.max(150f, Math.min(420f, 110 + Math.abs(contentHeight) * 1.15f));
+        return Math.round(base / ThemeStyle.current().animationSpeed);
     }
 
 
@@ -165,10 +186,20 @@ public final class UITheme {
         float thumbHeight = Math.max(trackHeight * 0.08f,
                 trackHeight * (trackHeight / (trackHeight + contentOverflow)));
         float thumbY = y + (scroll / -contentOverflow) * (trackHeight - thumbHeight);
+        ThemeRenderer tr = ThemeStyle.renderer();
+        if (tr != null) {
+            try {
+                if (tr.scrollbar(x, y, trackHeight, thumbY, thumbHeight, pct))
+                    return;
+            } catch (Throwable t) {
+                ThemeStyle.rendererFailed(t);
+            }
+        }
         float w = 2.5f;
-        DrawUtils.drawRoundedRect(x - w, y, x, y + trackHeight, w / 2f,
+        float r = ThemeStyle.current().controlRadius(w);
+        DrawUtils.drawRoundedRect(x - w, y, x, y + trackHeight, r,
                 fade(M3.surfaceContainerHighest(), pct * 0.55f));
-        DrawUtils.drawRoundedRect(x - w, thumbY, x, thumbY + thumbHeight, w / 2f,
+        DrawUtils.drawRoundedRect(x - w, thumbY, x, thumbY + thumbHeight, r,
                 alpha(accent(), (int) (230 * pct)));
     }
 

@@ -1,5 +1,6 @@
 package arsenic.gui.design;
 
+import arsenic.gui.themes.style.ThemeStyle;
 import arsenic.utils.font.FontRendererExtension;
 import arsenic.utils.render.DrawUtils;
 import arsenic.utils.render.RenderUtils;
@@ -36,7 +37,8 @@ public final class M3Controls {
         float pad = h * 0.42f;
         float textW = fr.getWidth(text);
         float w = Math.max(textW, minTextW) + pad * 2f;
-        DrawUtils.drawRoundedRect(rightX - w, cy - h / 2f, rightX, cy + h / 2f, h * 0.3f, fill);
+        DrawUtils.drawRoundedRect(rightX - w, cy - h / 2f, rightX, cy + h / 2f,
+                ThemeStyle.current().chipRadius(h * 0.3f), fill);
         fr.drawString(text, rightX - w / 2f - textW / 2f, cy, fg, fr.CENTREY);
         RenderUtils.resetColorText();
         return w;
@@ -49,11 +51,12 @@ public final class M3Controls {
     public static void rangeSlider(float x1, float cy, float len, float pMin, float pMax,
                                    float activeMin, float activeMax) {
         float h = M3Components.TRACK_H;
+        float r = ThemeStyle.current().controlRadius(h);
         float a = x1 + len * Math.max(0f, Math.min(1f, pMin));
         float b = x1 + len * Math.max(0f, Math.min(1f, pMax));
 
-        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + len, cy + h / 2f, h / 2f, M3Components.inactiveTrack());
-        DrawUtils.drawRoundedRect(a, cy - h / 2f, Math.max(b, a + h), cy + h / 2f, h / 2f, M3.primary());
+        DrawUtils.drawRoundedRect(x1, cy - h / 2f, x1 + len, cy + h / 2f, r, M3Components.inactiveTrack());
+        DrawUtils.drawRoundedRect(a, cy - h / 2f, Math.max(b, a + h), cy + h / 2f, r, M3.primary());
 
         M3Components.sliderHandle(a, cy, activeMin);
         M3Components.sliderHandle(b, cy, activeMax);
@@ -77,9 +80,12 @@ public final class M3Controls {
 
     /** Outlined dropdown/field container. {@code focus} 0..1 turns the outline primary. */
     public static void field(float x1, float y1, float x2, float y2, float radius, float hover, float focus) {
-        DrawUtils.drawRoundedRect(x1, y1, x2, y2, radius,
+        ThemeStyle ts = ThemeStyle.current();
+        float r = ts.panelRadius(radius, x2 - x1, y2 - y1);
+        DrawUtils.drawRoundedRect(x1, y1, x2, y2, r,
                 M3.mix(M3.surfaceContainerHigh(), M3.surfaceContainerHighest(), Math.max(hover * 0.6f, focus)));
-        DrawUtils.drawRoundedOutline(x1, y1, x2, y2, radius, 1f,
-                M3.mix(M3.alpha(M3.outline(), 150), M3.primary(), focus));
+        if (ts.borderWidth > 0.01f)
+            DrawUtils.drawRoundedOutline(x1, y1, x2, y2, r, ts.borderWidth,
+                    M3.mix(M3.alpha(M3.outline(), ts.borderAlpha(150)), M3.primary(), focus));
     }
 }
