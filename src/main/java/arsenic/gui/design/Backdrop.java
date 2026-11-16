@@ -2,6 +2,8 @@ package arsenic.gui.design;
 
 import arsenic.gui.click.GuiStyle;
 import arsenic.gui.themes.ThemeManager;
+import arsenic.gui.themes.style.ThemeBackground;
+import arsenic.gui.themes.style.ThemeLayout;
 import arsenic.utils.render.RenderUtils;
 import arsenic.utils.render.shader.KawaseBlur;
 import arsenic.utils.render.shader.ShaderUtil;
@@ -12,6 +14,7 @@ import org.lwjgl.opengl.GL11;
 /**
  * What sits behind the GUI: the blurred world, a tonal scrim (dark or light), and the animated
  * background shader the theme or GUI tab picked. {@link #overlay} adds the scanline pass on top.
+ * A theme file can swap the scrim and shader for an image, a colour, a gradient or nothing (ThemeLayout).
  */
 public final class Backdrop {
 
@@ -21,6 +24,13 @@ public final class Backdrop {
     private Backdrop() {}
 
     public static void draw(float width, float height) {
+        ThemeLayout layout = ThemeLayout.current();
+        if (layout.background != ThemeLayout.Background.SHADER) {
+            if (layout.blur)
+                blur();
+            ThemeBackground.draw(layout);
+            return;
+        }
         blur();
         scrim();
         shader();

@@ -17,7 +17,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
-/** Reads theme files from {@code ~/Arsenic/themes/*.json}. The format is documented in THEMES.md. */
+/** Reads theme files from {@code ~/Arsenic/themes/*.json}. The format is documented in THEMES.md and THEMES-LAYOUT.md. */
 public final class ThemeLoader {
 
     private ThemeLoader() {}
@@ -66,7 +66,7 @@ public final class ThemeLoader {
         return files;
     }
 
-    /** Builds a theme from one file's JSON and registers its style. */
+    /** Builds a theme from one file's JSON and registers its style and layout. */
     public static Theme parse(JsonObject o, String fallbackName) {
         String name = o.has("name") ? o.get("name").getAsString().trim() : fallbackName;
         if (name.isEmpty())
@@ -93,8 +93,15 @@ public final class ThemeLoader {
         if (c.has("configsCardBorder")) theme.setConfigsCardBorder(color(c.get("configsCardBorder")));
         if (c.has("textPrimary")) theme.setTextPrimary(color(c.get("textPrimary")));
 
-        if (o.has("background")) {
-            String bg = o.get("background").getAsString().trim().toUpperCase(Locale.ROOT);
+        // "background" is either a shader name or an object: {"type": "IMAGE", "file": "bg.png", ...}
+        JsonElement bgEl = o.get("background");
+        String shader = null;
+        if (bgEl != null && bgEl.isJsonPrimitive())
+            shader = bgEl.getAsString();
+        else if (bgEl != null && bgEl.isJsonObject() && bgEl.getAsJsonObject().has("shader"))
+            shader = bgEl.getAsJsonObject().get("shader").getAsString();
+        if (shader != null) {
+            String bg = shader.trim().toUpperCase(Locale.ROOT);
             try {
                 theme.setBgShader(GuiStyle.BgShader.valueOf(bg));
             } catch (IllegalArgumentException e) {
@@ -104,6 +111,9 @@ public final class ThemeLoader {
 
         JsonObject style = o.has("style") && o.get("style").isJsonObject() ? o.getAsJsonObject("style") : null;
         ThemeStyle.set(theme, ThemeStyle.fromJson(style));
+
+        JsonObject layout = o.has("layout") && o.get("layout").isJsonObject() ? o.getAsJsonObject("layout") : null;
+        ThemeLayout.set(theme, ThemeLayout.fromJson(layout, bgEl, name));
         return theme;
     }
 

@@ -91,10 +91,16 @@ public class ModuleManager {
         handledKeys.add(keycode);
         int clickGuiKey = arsenic.gui.click.GuiStyle.get().getClickGuiKey();
         if (clickGuiKey != 0 && keycode == clickGuiKey) {
-            if (Minecraft.getMinecraft().currentScreen instanceof arsenic.gui.click.ClickGuiScreen) {
-                ((arsenic.gui.click.ClickGuiScreen) Minecraft.getMinecraft().currentScreen).startClosing();
+            net.minecraft.client.gui.GuiScreen current = Minecraft.getMinecraft().currentScreen;
+            if (current instanceof arsenic.gui.click.ClickGuiScreen) {
+                ((arsenic.gui.click.ClickGuiScreen) current).startClosing();
+            } else if (arsenic.gui.click.PanelClickGui.isOurs(current)) {
+                Minecraft.getMinecraft().displayGuiScreen(null);
             } else {
-                Minecraft.getMinecraft().displayGuiScreen(Arsenic.getArsenic().getClickGuiScreen());
+                // the theme picks the ClickGUI: the classic window, the panels or an addon's screen
+                arsenic.gui.click.PanelClickGui.windowBypass = false;
+                if (!arsenic.gui.click.PanelClickGui.openForTheme())
+                    Minecraft.getMinecraft().displayGuiScreen(Arsenic.getArsenic().getClickGuiScreen());
             }
             return;
         }
